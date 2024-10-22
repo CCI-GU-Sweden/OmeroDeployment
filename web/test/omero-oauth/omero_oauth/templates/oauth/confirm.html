@@ -1,0 +1,53 @@
+{% extends "oauth/base.html" %}
+{% load i18n %}
+
+{% comment %}
+<!--
+  Copyright (C) 2019 University of Dundee & Open Microscopy Environment.
+  All rights reserved.
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU Affero General Public License as
+  published by the Free Software Foundation, either version 3 of the
+  License, or (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU Affero General Public License for more details.
+
+  You should have received a copy of the GNU Affero General Public License
+  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+-->
+{% endcomment %}
+
+{% block oauth %}
+
+    <p>You are logged in as {{ username }}</p>
+    {% if email_missing %}
+    <p>
+      You do not have an email address associated with your OMERO account.
+      We strongly recommend that you provide an email address in case we need to contact you regarding your account on this system.
+    </p>
+    <div class="buttons">
+      <a href="{% url 'wamyaccount' %}">
+        <span class="button">Update email</span>
+      </a>
+    </div>
+    <p class="altsubmit">
+      <a href="{{ url }}">Continue without email</a>
+    </p>
+    {% else %}
+    <div class="buttons">
+      <a href="{{ url }}">
+        <span class="button">Continue</span>
+      </a>
+    </div>
+    {% endif %}
+    {% if sessiontoken_enabled %}
+    <p>
+      If you want to log in using an OMERO client <a href="{% url 'oauth_sessiontoken' %}">obtain a session token here</a>.
+    </p>
+    {% endif %}
+
+{% endblock %}
