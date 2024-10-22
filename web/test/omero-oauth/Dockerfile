@@ -12,6 +12,8 @@ RUN cp /opt/omero-oauth/multi-example.yaml /opt/omero/web/config/oauth-providers
 RUN echo "config append -- omero.web.apps '\"omero_oauth\"'" >> /opt/omero/web/config/omero-web-apps.omero
 
 USER omero-web
+
+#Lägg omeroweb-config.omero i en secret och montera
 COPY omeroweb-config.omero /opt/
 RUN /opt/omero/web/OMERO.web/bin/omero load omeroweb-config.omero
 RUN /opt/omero/web/OMERO.web/bin/omero web restart
