@@ -1,0 +1,60 @@
+kind: CronJob
+apiVersion: batch/v1
+metadata:
+  name: postgresbackup
+  namespace: core-omero-dev
+spec:
+  schedule: 45 1 * * *
+  concurrencyPolicy: Allow
+  suspend: false
+  jobTemplate:
+    metadata:
+      creationTimestamp: null
+    spec:
+      template:
+        metadata:
+          creationTimestamp: null
+        spec:
+          volumes:
+            - name: postgresbackup
+              persistentVolumeClaim:
+                claimName: postgresbackup
+          containers:
+            - resources: {}
+              terminationMessagePath: /dev/termination-log
+              name: postgresbackup
+              command:
+                - /bin/bash
+                - '-eo'
+                - pipefail
+                - '-c'
+                - 'trap "echo Backup failed; exit 0" ERR; FILENAME=backup-omero-`date +%Y-%m-%d_%H%M%S`.sql.gz; time (find /postgresbackup -type f -name \"backup-omero-*\" -exec ls -ltr {} + | head -n -10 | xargs rm -fr; PGUSER=$PGUSER; PGDATABASE=$PGDATABASE; PGPASSWORD=$PGPASSWORD; pg_dump --host=postgresql --port=5432 $PGDATABASE | gzip > /postgresbackup/$FILENAME); echo; echo \"Backup successful\"; du -sh /postgresbackup/$FILENAME;'
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgresql
+                      key: database-password
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgresql
+                      key: database-user
+                - name: PGDATABASE
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgresql
+                      key: database-name
+              imagePullPolicy: Always
+              volumeMounts:
+                - name: postgresbackup
+                  mountPath: /postgresbackup
+              terminationMessagePolicy: File
+              image: 'registry.k8s.gu.se/openshift/postgresql:10-el8'
+          restartPolicy: OnFailure
+          terminationGracePeriodSeconds: 30
+          dnsPolicy: ClusterFirst
+          securityContext: {}
+          schedulerName: default-scheduler
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
