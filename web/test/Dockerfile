@@ -6,14 +6,14 @@ WORKDIR /opt
 
 ADD . /opt/omero-oauth
 
-RUN /opt/omero/web/venv3/bin/python omero-auth/omero-oauth/setup.py install
+RUN /opt/omero/web/venv3/bin/python /opt/omero-oauth/omero-oauth/setup.py install
 
-RUN cp /opt/omero-oauth/multi-example.yaml /opt/omero/web/config/oauth-providers.yaml
+RUN cp /opt/omero-oauth/omero-oauth/multi-example.yaml /opt/omero/web/config/oauth-providers.yaml
 RUN echo "config append -- omero.web.apps '\"omero_oauth\"'" >> /opt/omero/web/config/omero-web-apps.omero
 
 USER omero-web
-COPY omeroweb-config.omero /opt/omero/web/config/
-RUN /opt/omero/web/OMERO.web/bin/omero load omeroweb-config.omero
+COPY omero-oauth/omeroweb-config.omero /opt/omero/web/config/
+RUN /opt/omero/web/OMERO.web/bin/omero load /opt/omero/web/config/omeroweb-config.omero
 RUN /opt/omero/web/OMERO.web/bin/omero web restart
 
 ENV PATH="/opt/omero/web/OMERO.web/bin:${PATH}"

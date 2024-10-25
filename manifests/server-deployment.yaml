@@ -1,0 +1,88 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  annotations:
+    alpha.image.policy.openshift.io/resolve-names: '*'
+    app.openshift.io/route-disabled: 'false'
+  name: omero-server
+  namespace: core-omero-dev
+  labels:
+    app: omero-server
+    app.kubernetes.io/component: omero-server
+    app.kubernetes.io/instance: omero-server
+    app.kubernetes.io/name: omero-server
+    app.kubernetes.io/part-of: omero-server
+    app.openshift.io/runtime-namespace: core-omero-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: omero-server
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: omero-server
+        deploymentconfig: omero-server
+      annotations:
+        openshift.io/generated-by: OpenShiftWebConsole
+    spec:
+      volumes:
+        - name: omero
+          persistentVolumeClaim:
+            claimName: omero
+        - name: opt-omero-server-var
+          persistentVolumeClaim:
+            claimName: opt-omero-server-var
+        - name: cap-omero
+          persistentVolumeClaim:
+            claimName: cap-omero
+        - name: omero-server-grid-config
+          persistentVolumeClaim:
+            claimName: omero-server-grid-config
+      containers:
+        - resources: {}
+          terminationMessagePath: /dev/termination-log
+          name: omero-server
+          env:
+            - name: CONFIG_omero_db_user
+              value: userVKX
+            - name: CONFIG_omero_db_pass
+              value: MfVoE7cdMLgUJPI4
+            - name: CONFIG_omero_db_host
+              value: postgresql
+            - name: CONFIG_omero_db_name
+              value: omero
+            - name: ROOTPASS
+              value: testar
+            - name: CONFIG_omero_Ice_IPv6
+              value: '0'
+          ports:
+            - containerPort: 4063
+              protocol: TCP
+            - containerPort: 4064
+              protocol: TCP
+          imagePullPolicy: Always
+          volumeMounts:
+            - name: omero
+              mountPath: /omero
+            - name: opt-omero-server-var
+              mountPath: /opt/omero/server/OMERO.server/var
+            - name: cap-omero
+              mountPath: /OMERO
+            - name: omero-server-grid-config
+              mountPath: /opt/omero/server/OMERO.server
+          terminationMessagePolicy: File
+          image: 'image-registry.openshift-image-registry.svc:5000/core-omero-dev/omero-server@sha256:fcd13d16ba337ee097ab19eebdfa931c9fcaea064c5ea550015ee337c700c831'
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      securityContext: {}
+      schedulerName: default-scheduler
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600
