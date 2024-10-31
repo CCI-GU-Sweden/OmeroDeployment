@@ -5,7 +5,6 @@ metadata:
     alpha.image.policy.openshift.io/resolve-names: '*'
     app.openshift.io/route-disabled: 'false'
   name: omero-server
-  namespace: core-omero-dev
   labels:
     app: omero-server
     app.kubernetes.io/component: omero-server
@@ -31,18 +30,28 @@ spec:
         - name: omero
           persistentVolumeClaim:
             claimName: omero
-        - name: opt-omero-server-var
-          persistentVolumeClaim:
-            claimName: opt-omero-server-var
+#        - name: opt-omero-server-var
+#          persistentVolumeClaim:
+#            claimName: opt-omero-server-var
         - name: cap-omero
           persistentVolumeClaim:
             claimName: cap-omero
         - name: omero-server-grid-config
           persistentVolumeClaim:
             claimName: omero-server-grid-config
-        - name: omero-home
-          persistentVolumeClaim:
-            claimName: omero-home
+#        - name: omero-home
+#          persistentVolumeClaim:
+#            claimName: omero-home
+        - name: 60-db
+          configMap: 
+            name: 60-db-cf
+      initContainers:
+        - name: init-copy-files
+          image: registry.k8s.gu.se/openshift/omero-server:1.1
+          command: ['sh', '-c', 'cp -r /build_tmp/* /opt/omero/server/OMERO.server/']
+          volumeMounts:
+            - mountPath: /opt/omero/server/OMERO.server
+              name: omero-server-grid-config
       containers:
         - resources: {}
           terminationMessagePath: /dev/termination-log
@@ -69,16 +78,19 @@ spec:
           volumeMounts:
             - name: omero
               mountPath: /omero
-            - name: opt-omero-server-var
-              mountPath: /opt/omero/server/OMERO.server/var
+#            - name: opt-omero-server-var
+#              mountPath: /opt/omero/server/OMERO.server/var
             - name: cap-omero
               mountPath: /OMERO
             - name: omero-server-grid-config
               mountPath: /opt/omero/server/OMERO.server
-            - name: omero-home
-              mountPath: /omero_home
+            - name: 60-db
+              mountPath: /startup/60-database.sh
+              subPath: 60-database.sh
+#            - name: omero-home
+#              mountPath: /omero_home
           terminationMessagePolicy: File
-          image: 'image-registry.openshift-image-registry.svc:5000/core-omero-dev/omero-server@sha256:fcd13d16ba337ee097ab19eebdfa931c9fcaea064c5ea550015ee337c700c831'
+          image: registry.k8s.gu.se/openshift/omero-server:1.1
       restartPolicy: Always
       terminationGracePeriodSeconds: 30
       dnsPolicy: ClusterFirst

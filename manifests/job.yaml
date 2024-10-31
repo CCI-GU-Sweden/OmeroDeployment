@@ -1,0 +1,22 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: copy-bapp-data
+spec:
+  template:
+    spec:
+      containers:
+      - name: copy-container
+        image: registry.k8s.gu.se/openshift/omero-server:1.0 
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            cp -r /opt/omero/* /mnt/bapp
+        volumeMounts:
+        - name: bapp-storage
+          mountPath: /mnt/bapp
+      restartPolicy: Never
+      volumes:
+      - name: bapp-storage
+        persistentVolumeClaim:
+          claimName: omero
