@@ -40,6 +40,9 @@ spec:
         - name: omero-server-grid-config
           persistentVolumeClaim:
             claimName: omero-server-grid-config
+        - name: omero-home
+          persistentVolumeClaim:
+            claimName: omero-home
       containers:
         - resources: {}
           terminationMessagePath: /dev/termination-log
@@ -72,6 +75,8 @@ spec:
               mountPath: /OMERO
             - name: omero-server-grid-config
               mountPath: /opt/omero/server/OMERO.server
+            - name: omero-home
+              mountPath: /omero_home
           terminationMessagePolicy: File
           image: 'image-registry.openshift-image-registry.svc:5000/core-omero-dev/omero-server@sha256:fcd13d16ba337ee097ab19eebdfa931c9fcaea064c5ea550015ee337c700c831'
       restartPolicy: Always

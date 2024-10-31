@@ -1,0 +1,81 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  annotations:
+    alpha.image.policy.openshift.io/resolve-names: '*'
+    app.openshift.io/route-disabled: 'false'
+  name: omero-web
+  namespace: core-omero-dev
+  labels:
+    app: omero-web
+    app.kubernetes.io/component: omero-web
+    app.kubernetes.io/instance: omero-web
+    app.kubernetes.io/name: omero-web
+    app.openshift.io/runtime-namespace: core-omero-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: omero-web
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: omero-web
+        deploymentconfig: omero-web
+      annotations:
+        openshift.io/generated-by: OpenShiftWebConsole
+    spec:
+      volumes:
+        - name: omero-web-var
+          persistentVolumeClaim:
+            claimName: omero-web-var
+        - name: omero-web
+          persistentVolumeClaim:
+            claimName: omero-web
+        - name: omero-config
+          persistentVolumeClaim:
+            claimName: omero-config
+        - name: omero-web-config
+          persistentVolumeClaim:
+            claimName: omero-web-config
+      containers:
+        - resources: {}
+          terminationMessagePath: /dev/termination-log
+          name: omero-web
+          env:
+            - name: CONFIG_omero_web_server__list
+              value: '[["omero", 4064, "omero"]]'
+            - name: CONFIG_omero_web_static_url
+              value: /static/
+            - name: CONFIG_omero_web_debug
+              value: 'true'
+            - name: CONFIG_omero.web.cors_origin_allow_all
+              value: 'true'
+          ports:
+            - containerPort: 4080
+              protocol: TCP
+          imagePullPolicy: Always
+          volumeMounts:
+            - name: omero-web-var
+              mountPath: /opt/omero/web/OMERO.web/var
+            - name: omero-web
+              mountPath: /omero
+            - name: omero-config
+              mountPath: /opt/omero/web/OMERO.web/etc/grid
+            - name: omero-web-config
+              mountPath: /opt/omero/web/config/
+          terminationMessagePolicy: File
+          image: 'image-registry.openshift-image-registry.svc:5000/core-omero-dev/omero-web@sha256:25f63cf0eaaf6fc0ab4ff70b9823ec046e3603581cd0a74ed10c85024559085b'
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      securityContext: {}
+      schedulerName: default-scheduler
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600
