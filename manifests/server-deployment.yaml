@@ -45,6 +45,7 @@ spec:
         - name: 60-db
           configMap: 
             name: 60-db-cf
+            defaultMode: 493
       initContainers:
         - name: init-copy-files
           image: registry.k8s.gu.se/openshift/omero-server:1.2
