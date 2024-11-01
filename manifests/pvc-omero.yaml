@@ -4,10 +4,10 @@ metadata:
   name: omero
 spec:
   accessModes:
-  - ReadWriteOnce
+  - ReadWriteMany
   resources:
     requests:
       storage: 100Gi
-  storageClassName: block-standard
+  storageClassName: shared-standard
   volumeMode: Filesystem
 
