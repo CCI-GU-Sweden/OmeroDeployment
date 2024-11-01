@@ -60,9 +60,9 @@ spec:
           name: omero-server
           env:
             - name: CONFIG_omero_db_user
-              value: userVKX
+              value: userLL4
             - name: CONFIG_omero_db_pass
-              value: MfVoE7cdMLgUJPI4
+              value: H6w8tE2yG0gypiWv
             - name: CONFIG_omero_db_host
               value: postgresql
             - name: CONFIG_omero_db_name
