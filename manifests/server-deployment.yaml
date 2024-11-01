@@ -49,7 +49,7 @@ spec:
       initContainers:
         - name: init-copy-files
           image: registry.k8s.gu.se/openshift/omero-server:1.2
-          command: ['sh', '-c', 'cp -rn /build_tmp/* /opt/omero/server/OMERO.server/' && 'cp -rn /build_tmp2/* /OMERO/']
+          command: ['sh', '-c', 'cp -rn /build_tmp/* /opt/omero/server/OMERO.server/', 'cp -rn /build_tmp2/* /OMERO/']
           volumeMounts:
             - mountPath: /opt/omero/server/OMERO.server
               name: omero-server-grid-config
