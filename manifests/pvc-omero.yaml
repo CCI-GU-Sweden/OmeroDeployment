@@ -7,7 +7,7 @@ spec:
   - ReadWriteMany
   resources:
     requests:
-      storage: 100Gi
+      storage: 2Gi
   storageClassName: shared-standard
   volumeMode: Filesystem
 
