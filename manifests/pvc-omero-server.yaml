@@ -4,10 +4,10 @@ metadata:
   name: omero-server-grid-config
 spec:
   accessModes:
-  - ReadWriteOnce
+  - ReadWriteMany
   resources:
     requests:
       storage: 1Gi
-  storageClassName: block-standard
+  storageClassName: shared-standard
   volumeMode: Filesystem
 
