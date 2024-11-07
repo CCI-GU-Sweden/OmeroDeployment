@@ -35,7 +35,7 @@ spec:
           value: "true"
         - name: CONFIG_omero.web.cors_origin_allow_all
           value: "true"
-        image: registry.k8s.gu.se/openshift/omero-web:1.9
+        image: registry.k8s.gu.se/openshift/omero-web:1.12
         imagePullPolicy: Always
         name: omero-web
         ports:
@@ -60,18 +60,18 @@ spec:
           subPath: django_secret_key
       dnsPolicy: ClusterFirst
       initContainers:
-      - command:
-        - sh
-        - -c
-        - cp -rn /build_tmp2/* /opt/omero/web/
-        image: registry.k8s.gu.se/openshift/omero-web:1.9
+      - command: ["/bin/bash", "-c"]
+        args: 
+          - |
+            cp -rn /build_tmp2/* /opt/omero/web/
+        image: registry.k8s.gu.se/openshift/omero-web:1.12
         imagePullPolicy: IfNotPresent
         name: init-copy-files
         resources: {}
         terminationMessagePath: /dev/termination-log
         terminationMessagePolicy: File
         volumeMounts:
-        - mountPath: /opt/omero/web/
+        - mountPath: /opt/omero/web/        
           name: opt-omero-web
       restartPolicy: Always
       schedulerName: default-scheduler
