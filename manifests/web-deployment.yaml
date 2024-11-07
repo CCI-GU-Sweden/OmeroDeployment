@@ -5,13 +5,11 @@ metadata:
     alpha.image.policy.openshift.io/resolve-names: '*'
     app.openshift.io/route-disabled: 'false'
   name: omero-web
-  namespace: core-omero-dev
   labels:
     app: omero-web
     app.kubernetes.io/component: omero-web
     app.kubernetes.io/instance: omero-web
     app.kubernetes.io/name: omero-web
-    app.openshift.io/runtime-namespace: core-omero-dev
 spec:
   replicas: 1
   selector:
@@ -19,7 +17,6 @@ spec:
       app: omero-web
   template:
     metadata:
-      creationTimestamp: null
       labels:
         app: omero-web
         deploymentconfig: omero-web
