@@ -7,7 +7,7 @@ set -eu
 
 omero=/opt/omero/server/venv3/bin/omero
 omego=/opt/omero/server/venv3/bin/omego
-cd /opt/omero/server/OMERO.server-5.6.13-ice36/sql/psql
+cd /opt/omero/server/OMERO.server/sql/psql
 
 CONFIG_omero_db_host=${CONFIG_omero_db_host:-}
 if [ -n "$CONFIG_omero_db_host" ]; then

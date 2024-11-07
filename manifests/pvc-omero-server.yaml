@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: omero-server-grid-config
+  name: opt-omero
 spec:
   accessModes:
   - ReadWriteMany
