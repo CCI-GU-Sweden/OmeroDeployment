@@ -39,9 +39,9 @@ echo "postgres connection established"
 psql -w -h "$DBHOST" -p "$DBPORT" -U "$DBUSER" "$DBNAME" -c \
     "select * from dbpatch" 2> /dev/null && {
     echo "Upgrading database"
-    $omego db upgrade --serverdir=OMERO.server
+    $omego db upgrade --serverdir=/opt/omero/server/OMERO.server
 } || {
     echo "Initialising database"
-    $omego db init --rootpass "$ROOTPASS" --serverdir=OMERO.server
+    $omego db init --rootpass "$ROOTPASS" --serverdir=/opt/omero/server/OMERO.server
 }
 
