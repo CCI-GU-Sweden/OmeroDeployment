@@ -1,16 +1,12 @@
 kind: Deployment
 apiVersion: apps/v1
 metadata:
-  annotations:
-    alpha.image.policy.openshift.io/resolve-names: '*'
-    app.openshift.io/route-disabled: 'false'
   name: omero-server
   labels:
     app: omero-server
     app.kubernetes.io/component: omero-server
     app.kubernetes.io/instance: omero-server
     app.kubernetes.io/name: omero-server
-    app.kubernetes.io/part-of: omero-server
 spec:
   replicas: 1
   selector:
@@ -61,15 +57,15 @@ spec:
           name: omero-server
           env:
             - name: CONFIG_omero_db_user
-              value: userLL4
-            - name: CONFIG_omero_db_pass
-              value: H6w8tE2yG0gypiWv
-            - name: CONFIG_omero_db_host
-              value: postgresql
-            - name: CONFIG_omero_db_name
               value: omero
+            - name: CONFIG_omero_db_pass
+              value: nt4suger
+            - name: CONFIG_omero_db_host
+              value: omero-postgres-server
+            - name: CONFIG_omero_db_name
+              value: omerodb
             - name: ROOTPASS
-              value: testar
+              value: hejhej123
             - name: CONFIG_omero_Ice_IPv6
               value: '0'
           ports:
