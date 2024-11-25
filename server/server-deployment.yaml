@@ -31,6 +31,10 @@ spec:
           configMap: 
             name: 60-db-cf
             defaultMode: 493
+        - name: 01-gu-config
+          configMap: 
+            name: 01-gu-config.omero
+            defaultMode: 493
       initContainers:
         - name: init-copy
           image: registry.k8s.gu.se/openshift/omero-server:1.3
@@ -90,6 +94,9 @@ spec:
             - name: 60-db
               mountPath: /startup/60-database.sh
               subPath: 60-database.sh
+            - name: 01-gu-config
+              mountPath: /opt/omero/server/config/01-gu-config.omero
+              subPath: 01-gu-config.omero
           terminationMessagePolicy: File
           image: registry.k8s.gu.se/openshift/omero-server:1.3
       restartPolicy: Always
