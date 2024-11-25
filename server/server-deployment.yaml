@@ -57,13 +57,19 @@ spec:
           name: omero-server
           env:
             - name: CONFIG_omero_db_user
-              value: omero
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: POSTGRESQL_USER
             - name: CONFIG_omero_db_pass
-              value: nt4suger
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: POSTGRESQL_PASSWORD
             - name: CONFIG_omero_db_host
-              value: omero-postgres-server
+              value: change_me
             - name: CONFIG_omero_db_name
-              value: omerodb
+              value: change_me
             - name: ROOTPASS
               value: hejhej123
             - name: CONFIG_omero_Ice_IPv6
