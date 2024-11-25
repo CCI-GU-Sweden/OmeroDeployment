@@ -1,0 +1,21 @@
+config set -- omero.web.application_server.host 0.0.0.0
+config set -- omero.web.apps '["omero_iviewer", "omero_oauth"]'
+config set -- omero.web.check_version false
+config set -- omero.web.cors.origin.allow.all true
+config set -- omero.web.csrf_trusted_origins '["https://.omero-web-dev.apps.k8s.gu.se", "https://omero-web-dev.apps.k8s.gu.se"]'
+config set -- omero.web.login_view oauth_index
+config set -- omero.web.oauth.admin.password hejhej123
+config set -- omero.web.oauth.admin.user root
+config set -- omero.web.oauth.group.name start-group
+config set -- omero.web.oauth.host omero-server
+config set -- omero.web.debug false
+config set -- omero.web.oauth.providers /opt/omero/web/config/oauth-providers.yaml
+config set -- omero.web.oauth.sessiontoken.enable true
+config set -- omero.web.server_list '[["omero-server", 4064, "omero-server"]]'
+config set -- omero.web.static.url /static/
+config set -- omero.web.viewer.view omero_iviewer.views.index
+config set -- omero.web.oauth.user.timeout 28400
+config set -- omero.web.middleware '[{"index": 1, "class": "django.middleware.common.BrokenLinkEmailsMiddleware"}, {"index": 2, "class": "django.middleware.common.CommonMiddleware"}, {"index": 3, "class": "django.contrib.sessions.middleware.SessionMiddleware"}, {"index": 4, "class": "django.middleware.csrf.CsrfViewMiddleware"}, {"index": 5, "class": "django.contrib.messages.middleware.MessageMiddleware"}, {"index": 6, "class": "django.middleware.clickjacking.XFrameOptionsMiddleware"}, {"index": 0, "class": "whitenoise.middleware.WhiteNoiseMiddleware"}]'
+# Nedan är försök med hantering av session-längd
+config set -- omero.web.session_expire_at_browser_close true
+config set -- omero.web.session_cookie_age 86400
