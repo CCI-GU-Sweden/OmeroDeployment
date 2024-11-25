@@ -66,13 +66,25 @@ spec:
               name: postgres
           env:
             - name: POSTGRESQL_DATABASE
-              value: omerodb
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: POSTGRESQL_DATABASE
             - name: POSTGRESQL_USER
-              value: omero
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: POSTGRESQL_USER
             - name: POSTGRESQL_PASSWORD
-              value: nt4suger
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: POSTGRESQL_PASSWORD
             - name: POSTGRESQL_ADMIN_PASSWORD
-              value: nt4suger
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: POSTGRESQL_ADMIN_PASSWORD
           volumeMounts:
             - name: postgresql-data
               mountPath: /var/lib/pgsql/data          
