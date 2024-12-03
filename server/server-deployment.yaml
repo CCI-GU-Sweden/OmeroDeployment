@@ -44,7 +44,7 @@ spec:
                 #/bin/sh              
                 mkdir -p /mnt/opt
                 mkdir -p /mnt/cap
-                cp -rn /opt/omero/server/OMERO.server/* /mnt/opt
+                cp -r /opt/omero/server/OMERO.server/* /mnt/opt
                 cp -rn /OMERO/D* /mnt/cap
                 cp -rn /OMERO/F* /mnt/cap
                 cp -rn /OMERO/Man* /mnt/cap
