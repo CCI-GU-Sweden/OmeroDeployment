@@ -37,7 +37,7 @@ spec:
             defaultMode: 493
       initContainers:
         - name: init-copy
-          image: registry.k8s.gu.se/openshift/omero-server:1.3
+          image: registry.k8s.gu.se/openshift/omero-server:1.6
           command: ["/bin/bash","-c"]
           args: 
               - |
@@ -98,7 +98,7 @@ spec:
               mountPath: /opt/omero/server/config/01-gu-config.omero
               subPath: 01-gu-config.omero
           terminationMessagePolicy: File
-          image: registry.k8s.gu.se/openshift/omero-server:1.3
+          image: registry.k8s.gu.se/openshift/omero-server:1.6
       restartPolicy: Always
       terminationGracePeriodSeconds: 30
       dnsPolicy: ClusterFirst
