@@ -35,9 +35,13 @@ spec:
           configMap: 
             name: 01-gu-config.omero
             defaultMode: 493
+        - configMap:
+            defaultMode: 493
+          name: server-figure-to-pdf
+            name: server-figure-to-pdf
       initContainers:
         - name: init-copy
-          image: registry.k8s.gu.se/openshift/omero-server:1.6
+          image: registry.k8s.gu.se/openshift/omero-server:1.7
           command: ["/bin/bash","-c"]
           args: 
               - |
@@ -97,8 +101,11 @@ spec:
             - name: 01-gu-config
               mountPath: /opt/omero/server/config/01-gu-config.omero
               subPath: 01-gu-config.omero
+            - mountPath: /opt/omero/serer/OMERO.server/lib/scripts/omero/figure_scripts/Figure_To_Pdf.py
+              name: server-figure-to-pdf
+              subPath: Figure_To_Pdf.py
           terminationMessagePolicy: File
-          image: registry.k8s.gu.se/openshift/omero-server:1.6
+          image: registry.k8s.gu.se/openshift/omero-server:1.7
       restartPolicy: Always
       terminationGracePeriodSeconds: 30
       dnsPolicy: ClusterFirst
