@@ -25,7 +25,7 @@ spec:
         app: omero-web
     spec:
       containers:
-      - image: registry.k8s.gu.se/openshift/omero-web:2.0
+      - image: registry.k8s.gu.se/openshift/omero-web:2.3
         imagePullPolicy: Always
         name: omero-web
         ports:
@@ -59,7 +59,7 @@ spec:
         command:
         - /bin/bash
         - -c
-        image: registry.k8s.gu.se/openshift/omero-web:2.0
+        image: registry.k8s.gu.se/openshift/omero-web:2.3
         imagePullPolicy: IfNotPresent
         name: init-copy-files
         resources: {}
