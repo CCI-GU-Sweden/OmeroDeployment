@@ -20,13 +20,13 @@ spec:
       volumes:
         - name: omero
           persistentVolumeClaim:
-            claimName: omero
+            claimName: server-omero
         - name: cap-omero
           persistentVolumeClaim:
-            claimName: cap-omero
+            claimName: server-cap-omero
         - name: opt-omero
           persistentVolumeClaim:
-            claimName: opt-omero
+            claimName: server-opt-omero
         - name: 60-db
           configMap: 
             name: 60-db-cf
