@@ -33,7 +33,7 @@ spec:
             defaultMode: 493
         - name: 01-gu-config
           configMap: 
-            name: 01-gu-config.omero
+            name: 01-gu-config
             defaultMode: 493
         - configMap:
             name: server-figure-to-pdf
