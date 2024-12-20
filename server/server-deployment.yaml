@@ -75,11 +75,17 @@ spec:
                   name: postgresql-secret
                   key: POSTGRESQL_PASSWORD
             - name: CONFIG_omero_db_host
-              value: change_me
+              value: omero-postgres-server
             - name: CONFIG_omero_db_name
-              value: change_me
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: POSTGRESQL_DATABASE
             - name: ROOTPASS
-              value: hejhej123
+              valueFrom:
+                secretKeyRef:
+                  key: password
+                  name: omero-server-root-password
             - name: CONFIG_omero_Ice_IPv6
               value: '0'
           ports:
