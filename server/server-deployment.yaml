@@ -107,7 +107,7 @@ spec:
             - name: 01-gu-config
               mountPath: /opt/omero/server/config/01-gu-config.omero
               subPath: 01-gu-config.omero
-            - mountPath: /opt/omero/serer/OMERO.server/lib/scripts/omero/figure_scripts/Figure_To_Pdf.py
+            - mountPath: /opt/omero/server/OMERO.server/lib/scripts/omero/figure_scripts/Figure_To_Pdf.py
               name: server-figure-to-pdf
               subPath: Figure_To_Pdf.py
           terminationMessagePolicy: File
