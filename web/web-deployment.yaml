@@ -75,10 +75,10 @@ spec:
       volumes:
       - name: opt-omero-web
         persistentVolumeClaim:
-          claimName: opt-omero-web
+          claimName: web-opt-omero-web
       - name: omero-web
         persistentVolumeClaim:
-          claimName: omero-web
+          claimName: web-omero-web
       - configMap:
           defaultMode: 493
           name: omeroweb-config.omero

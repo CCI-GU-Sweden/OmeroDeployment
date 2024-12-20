@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: omero-web
+  name: web-omero-web
 spec:
   accessModes:
   - ReadWriteMany
