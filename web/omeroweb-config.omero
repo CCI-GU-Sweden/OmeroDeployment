@@ -1,5 +1,5 @@
 config set -- omero.web.application_server.host 0.0.0.0
-config set -- omero.web.apps '["omero_iviewer", "omero_oauth" "omero_figure"]'
+config set -- omero.web.apps '["omero_iviewer", "omero_oauth", "omero_figure"]'
 config set -- omero.web.check_version false
 config set -- omero.web.cors.origin.allow.all true
 config set -- omero.web.csrf_trusted_origins '["https://.omero-web-dev.apps.k8s.gu.se", "https://omero-web-dev.apps.k8s.gu.se"]'
