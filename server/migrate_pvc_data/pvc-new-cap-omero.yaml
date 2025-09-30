@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: new-cap-omero
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 30Gi
+  storageClassName: shared-economy
+  volumeMode: Filesystem
+

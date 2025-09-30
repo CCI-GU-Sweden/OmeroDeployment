@@ -1,0 +1,21 @@
+kind: Pod
+apiVersion: v1
+metadata:
+  name: copy-pvc-data
+spec:
+  containers:
+  - name: copy-pvc-data
+    image: public.ecr.aws/docker/library/alpine:latest
+    command: ['sh', '-c', 'sleep 12h']
+    volumeMounts:
+    - mountPath: /mnt/orig
+      name: original-pvc
+    - mountPath: /mnt/new
+      name: new-pvc
+  volumes:
+  - name: original-pvc
+    persistentVolumeClaim:
+      claimName: cap-omero
+  - name: new-pvc
+    persistentVolumeClaim:
+      claimName: cap-omero-economy
