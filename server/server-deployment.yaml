@@ -45,7 +45,7 @@ spec:
           name: logback-xml
       initContainers:
         - name: init-copy
-          image: registry.k8s.gu.se/openshift/omero-server:1.7
+          image: IMAGE-URL
           command: ["/bin/bash","-c"]
           args: 
               - |
@@ -118,7 +118,7 @@ spec:
               name: logback-xml
               subPath: logback.xml
           terminationMessagePolicy: File
-          image: registry.k8s.gu.se/openshift/omero-server:1.7
+          image: IMAGE-URL
       restartPolicy: Always
       terminationGracePeriodSeconds: 30
       dnsPolicy: ClusterFirst
