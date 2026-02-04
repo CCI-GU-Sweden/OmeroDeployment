@@ -15,8 +15,8 @@ OMERO_HOST = 'omero'
 OMERO_PORT = '4064'
 
 USE_TEST_URL = False
-OMERO_TEST_BASE_URL = 'https://omero-web-test.apps.k8s.gu.se'
-OMERO_BASE_URL = 'https://omero-cci-users.gu.se'
+OMERO_TEST_BASE_URL = 'https://URL'
+OMERO_BASE_URL = 'https://URL'
 
 if USE_TEST_URL:
     OMERO_BASE_URL = OMERO_TEST_BASE_URL
