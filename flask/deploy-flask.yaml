@@ -23,7 +23,7 @@ spec:
         deployment: flask-app
     spec:
       containers:
-      - image: registry.k8s.gu.se/openshift/omero-flask:v0.7
+      - image: IMAGE-URL
         imagePullPolicy: Always
         name: flask-app
         env:
