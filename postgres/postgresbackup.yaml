@@ -50,7 +50,7 @@ spec:
                 - name: postgresbackup
                   mountPath: /postgresbackup
               terminationMessagePolicy: File
-              image: 'registry.k8s.gu.se/openshift/postgresql:10-el8'
+              image: 'IMAGE-URL'
           restartPolicy: OnFailure
           terminationGracePeriodSeconds: 30
           dnsPolicy: ClusterFirst
