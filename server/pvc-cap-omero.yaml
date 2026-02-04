@@ -8,6 +8,6 @@ spec:
   resources:
     requests:
       storage: 30Gi
-  storageClassName: shared-standard
+  storageClassName: 
   volumeMode: Filesystem
 
