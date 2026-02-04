@@ -9,15 +9,15 @@ providers:
     displayname: Adfs
     url:
       # These 3 URLs will be found using OpenID discovery, uncomment to override
-      authorisation: https://idptest.it.gu.se/adfs/oauth2/authorize
-      token: https://idptest.it.gu.se/adfs/oauth2/token
-      userinfo: https://idptest.it.gu.se/adfs/userinfo
-      callback: https://omero-web-cci-omero-dev.apps.k8s.gu.se/oauth/callback/adfs
+      authorisation: 
+      token: 
+      userinfo: 
+      callback: https://URL/oauth/callback/adfs
 
     # https://console.developers.google.com/apis/credentials
     client:
-      id: ebe8036c-2c77-426a-8495-3ff9610e4c59
-      secret: Dx6Cg0ffMw93Mi2JmysohTrWcBhMk7mM9k3FVPsi
+      id: 
+      secret: 
       scopes:
         - openid
         - profile
