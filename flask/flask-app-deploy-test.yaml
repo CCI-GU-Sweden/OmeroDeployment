@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flask-app
+  namespace: core-omero-test
+  labels:
+    app: flask-app
+  annotations:
+    image.openshift.io/triggers: >-
+      [{"from":{"kind":"ImageStreamTag","name":"omero-frontend-test:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"flask-app\")].image"}]
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flask-app
+  template:
+    metadata:
+      labels:
+        app: flask-app
+    spec:
+      containers:
+        - name: flask-app
+          image: image-registry.openshift-image-registry.svc:5000/core-omero-test/omero-frontend-test:latest
+          imagePullPolicy: Always
+          env:
+            - name: JAVA_OPTS
+              value: -Djava.util.prefs.userRoot=/omero/userPrefs -Djava.util.prefs.systemRoot=/omero/systemPrefs
+          volumeMounts:
+            - name: config-py
+              mountPath: /app/omero/config.py
+              subPath: config.py
+            - name: local-uwsgi-ini
+              mountPath: /app/omero/local-uwsgi.ini
+              subPath: local-uwsgi.ini
+            - name: slash-omero
+              mountPath: /omero
+            - name: upload
+              mountPath: /app/omero/uploads
+            - name: logs
+              mountPath: /app/omero/logs
+            - name: slash-cache
+              mountPath: /.cache
+      volumes:
+        - name: local-uwsgi-ini
+          configMap:
+            name: local-uwsgi.ini
+        - name: config-py
+          configMap:
+            name: config.py
+        - name: slash-omero
+          persistentVolumeClaim:
+            claimName: flask-slash-omero
+        - name: logs
+          persistentVolumeClaim:
+            claimName: flask-logs
+        - name: upload
+          persistentVolumeClaim:
+            claimName: flask-upload
+        - name: slash-cache
+          persistentVolumeClaim:
+            claimName: flask-slash-cache
