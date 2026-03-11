@@ -1,1 +1,4 @@
 config set omero.db.poolsize 100
+config set omero.jvmcfg.max_system_memory 8000
+config set omero.jvmcfg.system__memory 8000
+config set omero.policy.binary_access +read,+write,+image,+plate

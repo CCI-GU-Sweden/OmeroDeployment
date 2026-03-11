@@ -1,0 +1,55 @@
+apiVersion: v1
+items:
+- apiVersion: batch/v1
+  kind: CronJob
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"batch/v1","kind":"CronJob","metadata":{"annotations":{},"name":"omero-weekly-restart","namespace":"core-omero-devops-test"},"spec":{"failedJobsHistoryLimit":3,"jobTemplate":{"spec":{"template":{"spec":{"containers":[{"command":["/bin/sh","-c","echo \"Restarting OMERO pods with label omero-server...\"\noc delete pod -n core-omero-test -l app=omero-server\necho \"OMERO restart job done.\"\n"],"image":"quay.io/openshift/origin-cli:4.14","name":"oc-cli"}],"restartPolicy":"Never","serviceAccountName":"omero-restart-sa"}}}},"schedule":"0 3 * * 0","successfulJobsHistoryLimit":1}}
+    creationTimestamp: "2025-11-21T11:36:17Z"
+    generation: 8
+    name: flaskapp-weekly-restart
+    namespace: core-omero-devops-test
+    resourceVersion: "5602720108"
+    #uid: 963ad711-615c-4cf7-b106-0b5acfe25ebf
+  spec:
+    concurrencyPolicy: Allow
+    failedJobsHistoryLimit: 3
+    jobTemplate:
+      metadata:
+        creationTimestamp: null
+      spec:
+        template:
+          metadata:
+            creationTimestamp: null
+          spec:
+            containers:
+            - command:
+              - /bin/sh
+              - -c
+              - |
+                echo "Restarting Flask app pods with label app=flask-app..."
+                oc delete pod -n core-omero-test -l app=flask-app
+                echo "Flask app restart job done."
+              image: quay.io/openshift/origin-cli:4.14
+              imagePullPolicy: IfNotPresent
+              name: oc-cli
+              resources: {}
+              terminationMessagePath: /dev/termination-log
+              terminationMessagePolicy: File
+            dnsPolicy: ClusterFirst
+            restartPolicy: Never
+            schedulerName: default-scheduler
+            securityContext: {}
+            serviceAccount: omero-restart-sa
+            serviceAccountName: omero-restart-sa
+            terminationGracePeriodSeconds: 30
+    schedule: 0 3 * * 0
+    successfulJobsHistoryLimit: 1
+    suspend: false
+  status:
+    lastScheduleTime: "2026-02-22T03:00:00Z"
+    lastSuccessfulTime: "2026-02-22T03:00:10Z"
+kind: List
+metadata:
+  resourceVersion: ""

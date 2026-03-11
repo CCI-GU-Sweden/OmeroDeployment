@@ -45,7 +45,7 @@ spec:
           name: logback-xml
       initContainers:
         - name: init-copy
-          image: IMAGE-URL
+          image: 'registry.k8s.gu.se/core-omero-prod/omero-server:1.8'
           command: ["/bin/bash","-c"]
           args: 
               - |
@@ -64,7 +64,9 @@ spec:
             - name: cap-omero
               mountPath: /mnt/cap
       containers:
-        - resources: {}
+        - resources: 
+            limits:
+              memory: 12G
           terminationMessagePath: /dev/termination-log
           name: omero-server
           env:
@@ -92,6 +94,8 @@ spec:
                   name: omero-server-root-password
             - name: CONFIG_omero_Ice_IPv6
               value: '0'
+            - name: CONFIG_omero_jvmcfg_max__system__memory
+              value: '6000'
           ports:
             - containerPort: 4063
               protocol: TCP
@@ -118,7 +122,7 @@ spec:
               name: logback-xml
               subPath: logback.xml
           terminationMessagePolicy: File
-          image: IMAGE-URL
+          image: 'registry.k8s.gu.se/core-omero-prod/omero-server:1.8'
       restartPolicy: Always
       terminationGracePeriodSeconds: 30
       dnsPolicy: ClusterFirst

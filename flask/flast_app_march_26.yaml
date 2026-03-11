@@ -2,15 +2,14 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   annotations:
-    deployment.kubernetes.io/revision: "166"
-    image.openshift.io/triggers: '[{"from":{"kind":"ImageStreamTag","name":"omero-frontend-test:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"flask-app\")].image"}]'
-#  creationTimestamp: "2024-12-17T09:12:08Z"
-  generation: 167
+    deployment.kubernetes.io/revision: "177"
+  creationTimestamp: "2024-12-17T09:12:08Z"
+  generation: 178
   labels:
     app: flask-app
   name: flask-app
   namespace: core-omero-test
-  resourceVersion: "5561092016"
+  resourceVersion: "5658506217"
   uid: b3744a6f-cea8-4fbc-94a3-01ecbb813c38
 spec:
   progressDeadlineSeconds: 600
@@ -27,7 +26,7 @@ spec:
   template:
     metadata:
       annotations:
-        openshift.openshift.io/restartedAt: "2026-02-03T13:22:10.992Z"
+        openshift.openshift.io/restartedAt: "2026-03-09T15:32:37.802Z"
       creationTimestamp: null
       labels:
         app: flask-app
@@ -37,8 +36,7 @@ spec:
       - env:
         - name: JAVA_OPTS
           value: -Djava.util.prefs.userRoot=/omero/userPrefs -Djava.util.prefs.systemRoot=/omero/systemPrefs
-        image: image-registry.openshift-image-registry.svc:5000/core-omero-test/omero-frontend-test@sha256
-        tag: latest
+        image: image-registry.openshift-image-registry.svc:5000/core-omero-test/omero-frontend-test:latest
         imagePullPolicy: Always
         name: flask-app
         resources: {}
@@ -85,22 +83,22 @@ spec:
       - name: slash-cache
         persistentVolumeClaim:
           claimName: flask-slash-cache
-# status:
-#   availableReplicas: 1
-#   conditions:
-#   - lastTransitionTime: "2025-12-07T20:37:39Z"
-#     lastUpdateTime: "2025-12-07T20:37:39Z"
-#     message: Deployment has minimum availability.
-#     reason: MinimumReplicasAvailable
-#     status: "True"
-#     type: Available
-#   - lastTransitionTime: "2025-01-22T10:03:14Z"
-#     lastUpdateTime: "2026-02-10T11:18:46Z"
-#     message: ReplicaSet "flask-app-549898875" has successfully progressed.
-#     reason: NewReplicaSetAvailable
-#     status: "True"
-#     type: Progressing
-#   observedGeneration: 167
-#   readyReplicas: 1
-#   replicas: 1
-#   updatedReplicas: 1
+status:
+  availableReplicas: 1
+  conditions:
+  - lastTransitionTime: "2026-03-08T03:00:06Z"
+    lastUpdateTime: "2026-03-08T03:00:06Z"
+    message: Deployment has minimum availability.
+    reason: MinimumReplicasAvailable
+    status: "True"
+    type: Available
+  - lastTransitionTime: "2025-01-22T10:03:14Z"
+    lastUpdateTime: "2026-03-09T15:33:02Z"
+    message: ReplicaSet "flask-app-75c88f8bf7" has successfully progressed.
+    reason: NewReplicaSetAvailable
+    status: "True"
+    type: Progressing
+  observedGeneration: 178
+  readyReplicas: 1
+  replicas: 1
+  updatedReplicas: 1

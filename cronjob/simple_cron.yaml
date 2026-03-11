@@ -1,0 +1,22 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: my-cronjob
+spec:
+  schedule: "*/1 * * * *"   # every 5 minutes
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - command:
+            - /bin/sh
+            - -c
+            - date; echo "Hello from OpenShift CronJob"
+            image: quay.io/openshift/origin-cli:4.14
+            imagePullPolicy: IfNotPresent
+            name: oc-cli
+    
+          restartPolicy: OnFailure

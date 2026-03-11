@@ -1,0 +1,11 @@
+apiVersion: v1
+data:
+  01-gu-config.omero: |
+    config set omero.db.poolsize 100
+    config set omero.pixeldata.max_plane_height 4096
+    config set omero.pixeldata.max_plane_width 4096
+    config set omero.policy.binary_access +read,+write,+image,+plate
+kind: ConfigMap
+metadata:
+  creationTimestamp: "2024-12-01T13:13:16Z"
+  name: 01-gu-config
