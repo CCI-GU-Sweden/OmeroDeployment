@@ -40,12 +40,12 @@ spec:
             defaultMode: 493          
           name: server-figure-to-pdf
         - configMap:
-            defaulMode: 493
+            defaultMode: 493
             name: logback.xml
           name: logback-xml
       initContainers:
         - name: init-copy
-          image: IMAGE-URL
+          image: registry.k8s.gu.se/core-omero-test/omero-server:1.8
           command: ["/bin/bash","-c"]
           args: 
               - |

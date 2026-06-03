@@ -8,6 +8,6 @@ spec:
   resources:
     requests:
       storage: 1Gi
-  storageClassName: 
+  storageClassName: shared-standard
   volumeMode: Filesystem
 
