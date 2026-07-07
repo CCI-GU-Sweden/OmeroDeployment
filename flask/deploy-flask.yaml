@@ -22,30 +22,11 @@ spec:
         app: flask-app
         deployment: flask-app
     spec:
-      containers:
-      - image: IMAGE-URL
-        imagePullPolicy: Always
-        name: flask-app
-        env:
-          - name: JAVA_OPTS
-            value: "-Djava.util.prefs.userRoot=/omero/userPrefs -Djava.util.prefs.systemRoot=/omero/systemPrefs"  
-        resources: {}
-        terminationMessagePath: /dev/termination-log
-        terminationMessagePolicy: File
-        volumeMounts:
-          - name: config-py
-            mountPath: /app/omero/config.py
-            subPath: config.py
-          - name: slash-omero
-            mountPath: /omero
-          - name: upload
-            mountPath: /app/omero/uploads
-#            defaultMode: 511
-          - name: logs
-            mountPath: /app/omero/logs
-          - name: slash-cache
-            mountPath: /.cache
       volumes:
+        - name: local-uwsgi-ini
+          configMap:
+            name: local-uwsgi.ini
+            defaultMode: 420
         - name: config-py
           configMap:
             name: config.py
@@ -61,6 +42,33 @@ spec:
         - name: slash-cache
           persistentVolumeClaim:
             claimName: flask-slash-cache
+      containers:
+      - image: image-registry.openshift-image-registry.svc:5000/core-omero-test/omero-frontend-test@sha256:e595db77437d8f4a6021de810a0df5e77edd4723e7033070100bf8f9a51d1c8c
+        imagePullPolicy: Always
+        name: flask-app
+        env:
+          - name: JAVA_OPTS
+              value: >-
+                -Djava.util.prefs.userRoot=/omero/userPrefs
+                -Djava.util.prefs.systemRoot=/omero/systemPrefs 
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+          - name: config-py
+            mountPath: /app/omero/config.py
+            subPath: config.py
+          - name: local-uwsgi-ini
+            mountPath: /app/omero/local-uwsgi.ini
+            subPath: local-uwsgi.ini
+          - name: slash-omero
+            mountPath: /omero
+          - name: upload
+            mountPath: /app/omero/uploads
+          - name: logs
+            mountPath: /app/omero/logs
+          - name: slash-cache
+            mountPath: /.cache
       dnsPolicy: ClusterFirst
       restartPolicy: Always
       schedulerName: default-scheduler
