@@ -1,0 +1,77 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dashboard
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: dashboard
+        deployment: dashboard
+      annotations:
+        openshift.openshift.io/restartedAt: '2025-05-09T09:44:13.535Z'
+    spec:
+      containers:
+        - name: dashboard
+          image: 'image-registry.openshift-image-registry.svc:5000/core-omero-test/dashboard-test@sha256:c5941e80bccbde7397c4d59fccd6150903e77bcd8280e4fa7729b4bc86d802b2'
+          env:
+            - name: PGDATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: dashboard-db-config
+                  key: PGDATABASE
+            - name: PGHOST
+              valueFrom:
+                configMapKeyRef:
+                  name: dashboard-db-config
+                  key: PGHOST
+            - name: PGPASSWORD
+              valueFrom:
+                configMapKeyRef:
+                  name: dashboard-db-config
+                  key: PGPASSWORD
+            - name: PGPORT
+              valueFrom:
+                configMapKeyRef:
+                  name: dashboard-db-config
+                  key: PGPORT
+            - name: PGUSER
+              valueFrom:
+                configMapKeyRef:
+                  name: dashboard-db-config
+                  key: PGUSER
+            - name: JWT_SECRET
+              valueFrom:
+                configMapKeyRef:
+                  name: dashboard-db-config
+                  key: JWT_SECRET
+            - name: API_TOKEN
+              valueFrom:
+                configMapKeyRef:
+                  name: dashboard-db-config
+                  key: API_TOKEN
+          resources:
+            limits:
+              memory: 60Mi
+            requests:
+              memory: 30Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          imagePullPolicy: Always
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      securityContext: {}
+      schedulerName: default-scheduler
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600
