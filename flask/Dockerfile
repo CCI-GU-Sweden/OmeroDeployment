@@ -1,5 +1,5 @@
 # Use an official Python image as the base
-FROM python:3.9-slim
+FROM python:3.12-slim
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -39,11 +39,8 @@ COPY . ${OMERO_HOME}
 
 RUN chmod 777 -R /app/omero
 
-RUN pip install --no-cache-dir -r requirements.txt
-
 EXPOSE 5000
 
-#ENV FLASK_APP=app
 ENV FLASK_APP=omero_frontend
 
 CMD ["python", "-m", "flask", "run", "--host=0.0.0.0"]
