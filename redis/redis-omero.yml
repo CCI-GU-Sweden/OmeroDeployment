@@ -1,0 +1,41 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: redis-omero
+  labels:
+    app: redis-omero
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-omero
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: redis-omero
+    spec:
+      containers:
+        - name: redis
+          image: 'public.ecr.aws/bitnami/redis:8.2.2-debian-12-r0'
+          env:
+            - name: ALLOW_EMPTY_PASSWORD
+              value: 'yes'
+            - name: REDIS_PASSWORD
+              value: redis
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          imagePullPolicy: IfNotPresent
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      securityContext: {}
+      schedulerName: default-scheduler
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600
