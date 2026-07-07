@@ -1,0 +1,57 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: filestatisticsdb
+  labels:
+    app: filestatisticsdb
+    app.kubernetes.io/component: filestatisticsdb
+    app.kubernetes.io/instance: filestatisticsdb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      deployment: filestatisticsdb
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        deployment: filestatisticsdb
+      annotations:
+        openshift.io/generated-by: OpenShiftNewApp
+    spec:
+      volumes:
+        - name: filestatistics-storage
+          persistentVolumeClaim:
+            claimName: filestatistics-storage
+      containers:
+        - resources: {}
+          terminationMessagePath: /dev/termination-log
+          name: filestatisticsdb
+          env:
+            - name: POSTGRESQL_DATABASE
+              value: omerofilestats
+            - name: POSTGRESQL_PASSWORD
+              value: gu_cci_postgres
+            - name: POSTGRESQL_USER
+              value: gu_cci_postgres
+          ports:
+            - containerPort: 5432
+              protocol: TCP
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: filestatistics-storage
+              mountPath: /var/lib/pgsql/data
+          terminationMessagePolicy: File
+          image: 'registry.redhat.io/rhscl/postgresql-95-rhel7@sha256:0cf19c73fb1ed0784a5092edd42ce662d7328dac529f56b6bfc3d85b24552ed4'
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      securityContext: {}
+      schedulerName: default-scheduler
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600
