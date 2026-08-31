@@ -17,10 +17,11 @@ spec:
     spec:
       containers:
         - name: redis
-          image: 'public.ecr.aws/bitnami/redis:8.2.2-debian-12-r0'
+          image: 'public.ecr.aws/docker/library/redis:8.2.2-alpine'
+          args:
+            - '--requirepass'
+            - $(REDIS_PASSWORD)
           env:
-            - name: ALLOW_EMPTY_PASSWORD
-              value: 'yes'
             - name: REDIS_PASSWORD
               value: redis
           resources: {}
