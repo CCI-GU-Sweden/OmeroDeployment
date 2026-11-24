@@ -1,0 +1,17 @@
+# Merge this entry into the existing providers list, retaining the GU ADFS
+# provider. Store the completed full file as an OpenShift Secret, never Git.
+name: orcid
+displayname: ORCID
+url:
+  authorisation: https://orcid.org/oauth/authorize
+  token: https://orcid.org/oauth/token
+  userinfo: https://pub.orcid.org/v3.0/{orcid}
+  callback: "https://<omero-web-host>/oauth/callback/orcid"
+client:
+  id: "<production-orcid-client-id>"
+  secret: "<production-orcid-client-secret>"
+  scopes: ["/authenticate"]
+userinfo:
+  type: orcid
+user:
+  name: 'orcid-{orcid}'

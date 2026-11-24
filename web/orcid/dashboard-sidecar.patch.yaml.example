@@ -1,0 +1,27 @@
+# EXAMPLE ONLY: replace the image digest; merge with the existing deployment.
+# The web container needs OMERO_APPROVAL_SERVER and OMERO_APPROVAL_TOKEN too.
+spec:
+  template:
+    spec:
+      containers:
+        - name: web
+          env:
+            - name: OMERO_APPROVAL_SERVER
+              value: "<stable-omero-server-id>"
+            - name: OMERO_APPROVAL_TOKEN
+              valueFrom:
+                secretKeyRef: {name: dashboard-omero-approval-token, key: token}
+        - name: approval-tls
+          image: "<trusted-nginx-image-with-ssl@sha256:digest>"
+          ports:
+            - {name: approval-tls, containerPort: 8443, protocol: TCP}
+          readinessProbe:
+            tcpSocket: {port: approval-tls}
+          volumeMounts:
+            - {name: approval-proxy-config, mountPath: /etc/nginx/conf.d/default.conf, subPath: default.conf, readOnly: true}
+            - {name: approval-serving-cert, mountPath: /var/run/approval-tls, readOnly: true}
+      volumes:
+        - name: approval-proxy-config
+          configMap: {name: dashboard-omero-approval-proxy}
+        - name: approval-serving-cert
+          secret: {secretName: dashboard-omero-approval-tls}

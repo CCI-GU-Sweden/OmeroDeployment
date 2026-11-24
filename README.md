@@ -11,6 +11,13 @@ Routes/Ingresses.
 
 ## What is included
 
+**ORCID integration:** For the tested dashboard, OMERO.web and OMERO_GU
+integration, see [web/orcid/README.md](web/orcid/README.md). It describes the
+additional components, a rebuild from scratch, production prerequisites and
+rollback. The base manifests below do not enable this integration by themselves.
+The `dashboard/` manifest describes the older dashboard and must not be assumed
+to deploy the current Django dashboard.
+
 | Path | Purpose |
 | --- | --- |
 | `postgres/` | PostgreSQL deployment and backup CronJob manifests. |

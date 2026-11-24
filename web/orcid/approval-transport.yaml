@@ -1,0 +1,42 @@
+# OpenShift transport for the dashboard approval API. Review the selector and
+# names for the target environment. This does not enable ORCID by itself.
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: dashboard-omero-approval
+      annotations:
+        service.beta.openshift.io/serving-cert-secret-name: dashboard-omero-approval-tls
+    spec:
+      selector:
+        app: dashboard-django
+      ports:
+        - name: https
+          port: 443
+          targetPort: 8443
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: dashboard-omero-approval-ca
+      annotations:
+        service.beta.openshift.io/inject-cabundle: 'true'
+    data: {}
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: dashboard-omero-approval-proxy
+    data:
+      default.conf: |
+        server {
+          listen 8443 ssl;
+          ssl_certificate /var/run/approval-tls/tls.crt;
+          ssl_certificate_key /var/run/approval-tls/tls.key;
+          location = /internal/omero/approval/ {
+            proxy_set_header Host dashboard-probe.local;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_pass http://127.0.0.1:8000;
+          }
+          location / { return 404; }
+        }

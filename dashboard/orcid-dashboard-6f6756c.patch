@@ -1,0 +1,1313 @@
+diff --git a/accounts/models.py b/accounts/models.py
+index 3326cf7..624e534 100644
+--- a/accounts/models.py
++++ b/accounts/models.py
+@@ -31,3 +31,72 @@ class VerifiedOmeroGroup(models.Model):
+ 
+     class Meta:
+         constraints = [models.UniqueConstraint(fields=['user', 'group_id'], name='unique_verified_user_group')]
++
++
++class ExternalOmeroAccess(models.Model):
++    """A staff-reviewed identity link; it does not itself issue OMERO sessions."""
++
++    identity = models.OneToOneField('socialaccount.SocialAccount', on_delete=models.PROTECT, related_name='external_omero_access')
++    server = models.CharField(max_length=200)
++    omero_user_id = models.PositiveBigIntegerField()
++    omero_username = models.CharField(max_length=255)
++    valid_until = models.DateField()
++    verified_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='verified_external_omero_access')
++    verified_at = models.DateTimeField(auto_now=True)
++    revoked_at = models.DateTimeField(null=True, blank=True)
++
++    class Meta:
++        constraints = [
++            models.UniqueConstraint(fields=['server', 'omero_user_id'], name='unique_external_omero_identity'),
++            models.CheckConstraint(condition=models.Q(omero_user_id__gt=0), name='external_omero_positive_user_id'),
++        ]
++
++    def is_approved(self, today=None):
++        from django.conf import settings
++        from django.utils import timezone
++        today = today or timezone.localdate()
++        return (
++            self.identity.provider == 'orcid'
++            and settings.SOCIALACCOUNT_PROVIDERS['orcid']['BASE_DOMAIN'] == 'orcid.org'
++            and self.identity.user.is_active
++            and bool(self.identity.user.role)
++            and self.revoked_at is None
++            and self.valid_until >= today
++        )
++
++
++class ExternalOmeroSession(models.Model):
++    """Track OMERO session database IDs, never their bearer UUIDs."""
++
++    access = models.ForeignKey(ExternalOmeroAccess, on_delete=models.PROTECT, related_name='issued_sessions')
++    omero_session_id = models.PositiveBigIntegerField(unique=True)
++    expires_at = models.DateTimeField()
++    close_requested_at = models.DateTimeField(null=True, blank=True)
++    closed_at = models.DateTimeField(null=True, blank=True)
++    created_at = models.DateTimeField(auto_now_add=True)
++
++    class Meta:
++        constraints = [models.CheckConstraint(condition=models.Q(omero_session_id__gt=0), name='external_omero_positive_session_id')]
++
++
++class ExternalOmeroProvisioning(models.Model):
++    """A reviewed request to create one non-admin OMERO user."""
++
++    identity = models.OneToOneField('socialaccount.SocialAccount', on_delete=models.PROTECT, related_name='external_omero_provisioning')
++    requested_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='requested_omero_accounts')
++    server = models.CharField(max_length=200)
++    username = models.CharField(max_length=255)
++    first_name = models.CharField(max_length=150)
++    last_name = models.CharField(max_length=150)
++    group_id = models.PositiveBigIntegerField()
++    valid_until = models.DateField()
++    status = models.CharField(max_length=16, default='pending')
++    created_omero_user_id = models.PositiveBigIntegerField(null=True, blank=True)
++    created_at = models.DateTimeField(auto_now_add=True)
++    updated_at = models.DateTimeField(auto_now=True)
++
++    class Meta:
++        constraints = [
++            models.UniqueConstraint(fields=['server', 'username'], name='unique_external_provision_username'),
++            models.CheckConstraint(condition=models.Q(group_id__gt=0), name='external_provision_positive_group'),
++        ]
+diff --git a/accounts/views.py b/accounts/views.py
+index f76f9dd..c8d5bd1 100644
+--- a/accounts/views.py
++++ b/accounts/views.py
+@@ -3,11 +3,143 @@ from django.db import DatabaseError, connection, transaction
+ from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
+ from django.shortcuts import get_object_or_404, redirect, render
+ from django.views.decorators.http import require_POST
++from django.views.decorators.csrf import csrf_exempt
++from django.views.decorators.cache import never_cache
+ 
+ from .models import AuditEvent, User, VerifiedOmeroGroup
+ from .permissions import is_dashboard_admin
+ 
+ 
++@csrf_exempt
++@never_cache
++@require_POST
++def omero_external_approval(request):
++    """Resolve an authenticated ORCID iD for the trusted OMERO integration."""
++    import re
++    from django.conf import settings
++    from django.utils.crypto import constant_time_compare
++    from .models import ExternalOmeroAccess, ExternalOmeroProvisioning, ExternalOmeroSession
++
++    # This endpoint is not authorized by browser cookies. Require a dedicated
++    # high-entropy service credential and TLS, including for internal calls.
++    token = settings.OMERO_APPROVAL_TOKEN
++    supplied = request.headers.get('Authorization', '')
++    if (not request.is_secure() or not settings.OMERO_APPROVAL_SERVER or
++            len(token) < 32 or not constant_time_compare(supplied, 'Bearer ' + token)):
++        return HttpResponseForbidden('Access denied.')
++    action = request.POST.get('action', 'lookup')
++    if action == 'provision_claim':
++        from django.utils import timezone
++        with transaction.atomic():
++            job = ExternalOmeroProvisioning.objects.select_for_update().select_related('identity__user', 'requested_by').filter(
++                server=settings.OMERO_APPROVAL_SERVER, status='pending').order_by('pk').first()
++            if not job:
++                return JsonResponse({'job': None})
++            if (not is_dashboard_admin(job.requested_by) or job.identity.provider != 'orcid' or not job.identity.user.is_active or not job.identity.user.role or
++                    job.valid_until < timezone.localdate() or settings.SOCIALACCOUNT_PROVIDERS['orcid']['BASE_DOMAIN'] != 'orcid.org'):
++                job.status = 'failed'
++                job.save(update_fields=['status', 'updated_at'])
++                return JsonResponse({'job': None})
++            job.status = 'processing'
++            job.save(update_fields=['status', 'updated_at'])
++            return JsonResponse({'job': {'id': job.pk, 'username': job.username, 'first_name': job.first_name,
++                                          'last_name': job.last_name, 'group_id': job.group_id}})
++    if action in ('provision_complete', 'provision_failed'):
++        job_id = request.POST.get('job_id', '')
++        user_id = request.POST.get('omero_user_id', '')
++        if not job_id.isdecimal() or not 1 <= int(job_id) <= 9223372036854775807:
++            return HttpResponseBadRequest('Invalid provisioning request.')
++        if user_id and (not user_id.isdecimal() or not 1 <= int(user_id) <= 9223372036854775807):
++            return HttpResponseBadRequest('Invalid OMERO user.')
++        with transaction.atomic():
++            job = ExternalOmeroProvisioning.objects.select_for_update().select_related('identity__user', 'requested_by').filter(
++                pk=int(job_id), server=settings.OMERO_APPROVAL_SERVER).first()
++            if not job or job.status != 'processing':
++                return HttpResponseForbidden('Access denied.')
++            if action == 'provision_failed':
++                job.status = 'failed'
++                job.created_omero_user_id = int(user_id) if user_id else None
++                job.save(update_fields=['status', 'created_omero_user_id', 'updated_at'])
++                return JsonResponse({'recorded': True})
++            if not user_id or not is_dashboard_admin(job.requested_by) or not job.identity.user.is_active or not job.identity.user.role:
++                return HttpResponseForbidden('Access denied.')
++            from django.utils import timezone
++            if job.valid_until < timezone.localdate() or ExternalOmeroAccess.objects.filter(identity=job.identity).exists():
++                return HttpResponseForbidden('Access denied.')
++            link = ExternalOmeroAccess.objects.create(identity=job.identity, server=job.server, omero_user_id=int(user_id),
++                omero_username=job.username, valid_until=job.valid_until, verified_by=job.requested_by)
++            job.status, job.created_omero_user_id = 'complete', int(user_id)
++            job.save(update_fields=['status', 'created_omero_user_id', 'updated_at'])
++            AuditEvent.objects.create(actor=job.requested_by, target=job.identity.user, action='external_omero_created',
++                before={}, after={'omero_user_id': link.omero_user_id, 'group_id': job.group_id, 'server': job.server})
++            return JsonResponse({'recorded': True})
++    if action == 'register':
++        from datetime import timedelta
++        from django.utils import timezone
++        access_id = request.POST.get('access_id', '')
++        session_id = request.POST.get('session_id', '')
++        if (not access_id.isdecimal() or not session_id.isdecimal() or
++                not 1 <= int(access_id) <= 9223372036854775807 or
++                not 1 <= int(session_id) <= 9223372036854775807):
++            return HttpResponseBadRequest('Invalid session.')
++        with transaction.atomic():
++            link = ExternalOmeroAccess.objects.select_for_update().select_related('identity__user').filter(
++                pk=int(access_id), server=settings.OMERO_APPROVAL_SERVER).first()
++            if not link or not link.is_approved():
++                return HttpResponseForbidden('Access denied.')
++            # The OMERO caller sets the corresponding maximum session lifetime.
++            existing, created = ExternalOmeroSession.objects.get_or_create(
++                omero_session_id=int(session_id),
++                defaults={'access': link, 'expires_at': timezone.now() + timedelta(hours=8, minutes=5)})
++            if not created and (existing.access_id != link.pk or existing.closed_at is not None):
++                return HttpResponseForbidden('Access denied.')
++        return JsonResponse({'registered': True})
++    if action == 'pending':
++        from django.db.models import Q
++        from django.utils import timezone
++        today = timezone.localdate()
++        ExternalOmeroSession.objects.filter(access__server=settings.OMERO_APPROVAL_SERVER,
++                                           closed_at__isnull=True, expires_at__lt=timezone.now()).update(closed_at=timezone.now())
++        pending = ExternalOmeroSession.objects.filter(
++            access__server=settings.OMERO_APPROVAL_SERVER, closed_at__isnull=True,
++        ).filter(Q(close_requested_at__isnull=False) | Q(access__revoked_at__isnull=False) | Q(access__valid_until__lt=today) |
++                 Q(access__identity__user__is_active=False) | Q(access__identity__user__role='') |
++                 ~Q(access__identity__provider='orcid')).order_by('pk')
++        return JsonResponse({'session_ids': list(pending.values_list('omero_session_id', flat=True)[:100])})
++    if action == 'close_requested':
++        from django.utils import timezone
++        session_id = request.POST.get('session_id', '')
++        if not session_id.isdecimal() or not 1 <= int(session_id) <= 9223372036854775807:
++            return HttpResponseBadRequest('Invalid session.')
++        ExternalOmeroSession.objects.filter(access__server=settings.OMERO_APPROVAL_SERVER,
++                                           omero_session_id=int(session_id), closed_at__isnull=True).update(close_requested_at=timezone.now())
++        return JsonResponse({'requested': True})
++    if action == 'closed':
++        from django.utils import timezone
++        session_id = request.POST.get('session_id', '')
++        if not session_id.isdecimal() or not 1 <= int(session_id) <= 9223372036854775807:
++            return HttpResponseBadRequest('Invalid session.')
++        ExternalOmeroSession.objects.filter(access__server=settings.OMERO_APPROVAL_SERVER,
++                                           omero_session_id=int(session_id), closed_at__isnull=True).update(closed_at=timezone.now())
++        return JsonResponse({'closed': True})
++    if action != 'lookup':
++        return HttpResponseBadRequest('Invalid action.')
++    orcid = request.POST.get('orcid', '')
++    if not re.fullmatch(r'\d{4}-\d{4}-\d{4}-\d{3}[\dX]', orcid):
++        return HttpResponseBadRequest('Invalid ORCID iD.')
++    link = ExternalOmeroAccess.objects.select_related('identity__user').filter(
++        identity__provider='orcid', identity__uid=orcid,
++        server=settings.OMERO_APPROVAL_SERVER,
++    ).first()
++    if not link or not link.is_approved():
++        response = JsonResponse({'approved': False})
++    else:
++        response = JsonResponse({'approved': True, 'access_id': link.pk, 'omero_user_id': link.omero_user_id,
++                                 'omero_username': link.omero_username})
++    response['Cache-Control'] = 'no-store'
++    return response
++
++
+ def live(request):
+     return HttpResponse('ok', content_type='text/plain')
+ 
+@@ -35,6 +167,128 @@ def administration(request):
+     return render(request, 'administration.html', {'accounts': User.objects.prefetch_related('omero_group_memberships', 'socialaccount_set').order_by('date_joined'), 'events': AuditEvent.objects.select_related('actor', 'target').order_by('-created_at')[:100], 'tickets_enabled': settings.DASHBOARD_TICKETS_ENABLED})
+ 
+ 
++@login_required
++def external_omero_users(request):
++    from django.conf import settings
++    from .models import ExternalOmeroAccess, ExternalOmeroProvisioning
++    if not is_dashboard_admin(request.user):
++        return HttpResponseForbidden('Administrator access required.')
++    return render(request, 'external_omero_users.html', {
++        'accounts': User.objects.filter(is_active=True).exclude(role='').prefetch_related('socialaccount_set').order_by('username'),
++        'links': ExternalOmeroAccess.objects.select_related('identity__user', 'verified_by').order_by('identity__user__username'),
++        'provisioning': ExternalOmeroProvisioning.objects.select_related('identity__user').order_by('-created_at'),
++        'server': settings.OMERO_APPROVAL_SERVER,
++    })
++
++
++@login_required
++@require_POST
++def create_external_omero_user(request):
++    import re
++    from datetime import date, timedelta
++    from django.conf import settings
++    from django.db import IntegrityError
++    from django.utils import timezone
++    from allauth.socialaccount.models import SocialAccount
++    from .models import ExternalOmeroAccess, ExternalOmeroProvisioning
++    if not is_dashboard_admin(request.user):
++        return HttpResponseForbidden('Administrator access required.')
++    if not settings.OMERO_APPROVAL_SERVER or settings.SOCIALACCOUNT_PROVIDERS['orcid']['BASE_DOMAIN'] != 'orcid.org':
++        return HttpResponseBadRequest('External OMERO access is not configured.')
++    identity_id, group_id = request.POST.get('identity_id', ''), request.POST.get('group_id', '')
++    first, last = request.POST.get('first_name', '').strip(), request.POST.get('last_name', '').strip()
++    try:
++        until = date.fromisoformat(request.POST.get('valid_until', ''))
++        if (not identity_id.isdecimal() or not group_id.isdecimal() or
++                not 1 <= int(identity_id) <= 9223372036854775807 or not 1 <= int(group_id) <= 9223372036854775807 or
++                not first or not last or len(first) > 150 or len(last) > 150 or
++                request.POST.get('verified') != 'yes' or
++                not timezone.localdate() <= until <= timezone.localdate() + timedelta(days=365)):
++            raise ValueError
++    except ValueError:
++        return HttpResponseBadRequest('Verify the researcher and enter a valid group, name and review date.')
++    try:
++        with transaction.atomic():
++            actor = User.objects.select_for_update().get(pk=request.user.pk)
++            if not is_dashboard_admin(actor):
++                return HttpResponseForbidden('Administrator access required.')
++            identity = get_object_or_404(SocialAccount.objects.select_related('user'), pk=int(identity_id), provider='orcid')
++            target = User.objects.select_for_update().get(pk=identity.user_id)
++            if (not target.is_active or not target.role or not re.fullmatch(r'\d{4}-\d{4}-\d{4}-\d{3}[\dX]', identity.uid) or
++                    ExternalOmeroAccess.objects.filter(identity=identity).exists()):
++                return HttpResponseBadRequest('The identity cannot be provisioned.')
++            job = ExternalOmeroProvisioning.objects.create(identity=identity, requested_by=actor,
++                server=settings.OMERO_APPROVAL_SERVER, username='orcid-' + identity.uid,
++                first_name=first, last_name=last, group_id=int(group_id), valid_until=until)
++            AuditEvent.objects.create(actor=actor, target=target, action='external_omero_requested', before={},
++                after={'request_id': job.pk, 'group_id': job.group_id, 'server': job.server})
++    except IntegrityError:
++        return HttpResponseBadRequest('An account request or conflicting username already exists; review it first.')
++    return redirect('external_omero_users')
++
++
++@login_required
++@require_POST
++def update_external_omero_user(request):
++    from datetime import date, timedelta
++    from django.conf import settings
++    from django.db import IntegrityError
++    from django.utils import timezone
++    from allauth.socialaccount.models import SocialAccount
++    from .models import ExternalOmeroAccess, ExternalOmeroProvisioning
++    if not is_dashboard_admin(request.user):
++        return HttpResponseForbidden('Administrator access required.')
++    if not settings.OMERO_APPROVAL_SERVER or settings.SOCIALACCOUNT_PROVIDERS['orcid']['BASE_DOMAIN'] != 'orcid.org':
++        return HttpResponseBadRequest('External OMERO access is not configured for production ORCID.')
++    identity_id = request.POST.get('identity_id', '')
++    if not identity_id.isdecimal():
++        return HttpResponseBadRequest('Select an authenticated ORCID account.')
++    action = request.POST.get('action', '')
++    try:
++        with transaction.atomic():
++            actor = User.objects.select_for_update().get(pk=request.user.pk)
++            if not is_dashboard_admin(actor):
++                return HttpResponseForbidden('Administrator access required.')
++            identity = get_object_or_404(SocialAccount.objects.select_related('user'), pk=identity_id, provider='orcid')
++            target = User.objects.select_for_update().get(pk=identity.user_id)
++            link = ExternalOmeroAccess.objects.select_for_update().filter(identity=identity).first()
++            before = {'omero_user_id': link.omero_user_id, 'server': link.server, 'valid_until': link.valid_until.isoformat(), 'revoked': bool(link.revoked_at)} if link else {}
++            if action == 'revoke':
++                if not link:
++                    return HttpResponseBadRequest('No external OMERO link exists.')
++                link.revoked_at = timezone.now()
++                link.save(update_fields=['revoked_at'])
++            elif action == 'approve':
++                if ExternalOmeroProvisioning.objects.filter(identity=identity, status__in=['pending', 'processing']).exists():
++                    return HttpResponseBadRequest('Wait for the OMERO account request to finish before linking.')
++                user_id = request.POST.get('omero_user_id', '')
++                username = request.POST.get('omero_username', '').strip()
++                try:
++                    until = date.fromisoformat(request.POST.get('valid_until', ''))
++                    if (not user_id.isdecimal() or not 1 <= int(user_id) <= 9223372036854775807 or
++                            not username or len(username) > 255 or not target.is_active or not target.role or
++                            request.POST.get('verified') != 'yes' or
++                            not timezone.localdate() <= until <= timezone.localdate() + timedelta(days=365)):
++                        raise ValueError
++                except ValueError:
++                    return HttpResponseBadRequest('Verify the identity and enter a valid OMERO user and review date.')
++                if (link and (not link.is_approved() or link.omero_user_id != int(user_id) or
++                              link.omero_username != username or link.server != settings.OMERO_APPROVAL_SERVER) and
++                        link.issued_sessions.filter(closed_at__isnull=True, expires_at__gt=timezone.now()).exists()):
++                    return HttpResponseBadRequest('Existing external sessions must be terminated before this link can change.')
++                link, _ = ExternalOmeroAccess.objects.update_or_create(identity=identity, defaults={
++                    'server': settings.OMERO_APPROVAL_SERVER, 'omero_user_id': int(user_id),
++                    'omero_username': username, 'valid_until': until, 'verified_by': actor, 'revoked_at': None,
++                })
++            else:
++                return HttpResponseBadRequest('Invalid action.')
++            after = {'omero_user_id': link.omero_user_id, 'server': link.server, 'valid_until': link.valid_until.isoformat(), 'revoked': bool(link.revoked_at)}
++            AuditEvent.objects.create(actor=actor, target=target, action='external_omero_link', before=before, after=after)
++    except IntegrityError:
++        return HttpResponseBadRequest('This OMERO account is already linked to another identity.')
++    return redirect('external_omero_users')
++
++
+ @login_required
+ @require_POST
+ def update_omero_group(request, user_id):
+@@ -101,6 +355,10 @@ def update_account(request, user_id):
+         elif role != User.Role.RESEARCHER:
+             target.can_create_tickets = False
+         target.save(update_fields=['role', 'is_active', 'can_create_tickets'])
++        if not role or active == 'no':
++            from django.utils import timezone
++            from .models import ExternalOmeroAccess
++            ExternalOmeroAccess.objects.filter(identity__user=target, revoked_at__isnull=True).update(revoked_at=timezone.now())
+         if role != User.Role.RESEARCHER or active == 'no':
+             VerifiedOmeroGroup.objects.filter(user=target).delete()
+         after = {'role': target.role, 'is_active': target.is_active, 'can_create_tickets': target.can_create_tickets}
+diff --git a/dashboard/settings.py b/dashboard/settings.py
+index f226766..ac55b9f 100644
+--- a/dashboard/settings.py
++++ b/dashboard/settings.py
+@@ -70,6 +70,9 @@ SOCIALACCOUNT_AUTO_SIGNUP = True
+ SOCIALACCOUNT_EMAIL_AUTHENTICATION = False
+ SOCIALACCOUNT_STORE_TOKENS = False
+ SOCIALACCOUNT_PROVIDERS = {'orcid': {'BASE_DOMAIN': 'orcid.org' if os.environ.get('ORCID_ENVIRONMENT') == 'production' else 'sandbox.orcid.org', 'APP': {'client_id': os.environ.get('ORCID_CLIENT_ID', ''), 'secret': os.environ.get('ORCID_CLIENT_SECRET', ''), 'key': ''}}}
++# Empty values keep the OMERO approval service disabled until explicitly configured.
++OMERO_APPROVAL_TOKEN = os.environ.get('OMERO_APPROVAL_TOKEN', '')
++OMERO_APPROVAL_SERVER = os.environ.get('OMERO_APPROVAL_SERVER', '')
+ LOGIN_URL = '/'
+ LOGIN_REDIRECT_URL = '/'
+ ACCOUNT_LOGOUT_REDIRECT_URL = '/'
+diff --git a/dashboard/urls.py b/dashboard/urls.py
+index 864c1af..1e3ebc0 100644
+--- a/dashboard/urls.py
++++ b/dashboard/urls.py
+@@ -9,7 +9,11 @@ urlpatterns = [
+     path('api/modules/<slug:module_key>/overview', module_overview, name='module_overview'),
+     path('health/live/', views.live, name='live'),
+     path('health/ready/', views.ready, name='ready'),
++    path('internal/omero/approval/', views.omero_external_approval, name='omero_external_approval'),
+     path('administration/', views.administration, name='administration'),
++    path('administration/external-users/', views.external_omero_users, name='external_omero_users'),
++    path('administration/external-users/update/', views.update_external_omero_user, name='update_external_omero_user'),
++    path('administration/external-users/create/', views.create_external_omero_user, name='create_external_omero_user'),
+     path('administration/accounts/<int:user_id>/', views.update_account, name='update_account'),
+     path('administration/accounts/<int:user_id>/omero/', views.update_omero_group, name='update_omero_group'),
+     # Accounts are provisioned only through ORCID; do not expose password recovery,
+diff --git a/templates/administration.html b/templates/administration.html
+index 6ca75f1..d225e82 100644
+--- a/templates/administration.html
++++ b/templates/administration.html
+@@ -1,6 +1,7 @@
+ {% extends 'base.html' %}{% load static %}{% block content %}
+ <section class="dashboard-content administration-view">
+   <div class="administration-header"><div><p class="eyebrow">Dashboard access</p><h1 class="title is-3">Administration</h1><p>Verify each request before assigning a role. Changes are recorded in the audit history.</p></div><a class="button is-light" href="{% url 'home' %}">← Overview</a></div>
++  <div class="admin-panel"><a class="button is-link is-light" href="{% url 'external_omero_users' %}">External OMERO users</a></div>
+   {% if tickets_enabled %}<div class="admin-panel"><div class="admin-panel-heading"><div><p class="eyebrow">Facility support</p><h2 class="title is-5">Equipment catalogue</h2><p>Manage the equipment available for tickets.</p></div><a class="button is-link is-light" href="{% url 'tickets' %}?manage-equipment=1">Manage equipment</a></div></div>{% endif %}
+   <section class="admin-panel" aria-labelledby="accounts-title">
+     <div class="admin-panel-heading"><div><p class="eyebrow">Access management</p><h2 class="title is-4" id="accounts-title">Accounts and access requests</h2></div><span id="account-count" role="status"></span></div>
+diff --git a/accounts/migrations/0008_externalomeroaccess.py b/accounts/migrations/0008_externalomeroaccess.py
+new file mode 100644
+index 0000000..d4f44a4
+--- /dev/null
++++ b/accounts/migrations/0008_externalomeroaccess.py
+@@ -0,0 +1,33 @@
++# Generated by Django 5.2.19 on 2026-11-24 10:06
++
++import django.db.models.deletion
++from django.conf import settings
++from django.db import migrations, models
++
++
++class Migration(migrations.Migration):
++
++    dependencies = [
++        ('accounts', '0007_remove_ticketresearcherlink_researcher_and_more'),
++        ('socialaccount', '0006_alter_socialaccount_extra_data'),
++    ]
++
++    operations = [
++        migrations.CreateModel(
++            name='ExternalOmeroAccess',
++            fields=[
++                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++                ('server', models.CharField(max_length=200)),
++                ('omero_user_id', models.PositiveBigIntegerField()),
++                ('omero_username', models.CharField(max_length=255)),
++                ('valid_until', models.DateField()),
++                ('verified_at', models.DateTimeField(auto_now=True)),
++                ('revoked_at', models.DateTimeField(blank=True, null=True)),
++                ('identity', models.OneToOneField(on_delete=django.db.models.deletion.PROTECT, related_name='external_omero_access', to='socialaccount.socialaccount')),
++                ('verified_by', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='verified_external_omero_access', to=settings.AUTH_USER_MODEL)),
++            ],
++            options={
++                'constraints': [models.UniqueConstraint(fields=('server', 'omero_user_id'), name='unique_external_omero_identity'), models.CheckConstraint(condition=models.Q(('omero_user_id__gt', 0)), name='external_omero_positive_user_id')],
++            },
++        ),
++    ]
+diff --git a/accounts/migrations/0009_externalomerosession.py b/accounts/migrations/0009_externalomerosession.py
+new file mode 100644
+index 0000000..e4383d1
+--- /dev/null
++++ b/accounts/migrations/0009_externalomerosession.py
+@@ -0,0 +1,29 @@
++# Generated by Django 5.2.19 on 2026-11-24 10:48
++
++import django.db.models.deletion
++from django.db import migrations, models
++
++
++class Migration(migrations.Migration):
++
++    dependencies = [
++        ('accounts', '0008_externalomeroaccess'),
++    ]
++
++    operations = [
++        migrations.CreateModel(
++            name='ExternalOmeroSession',
++            fields=[
++                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++                ('omero_session_id', models.PositiveBigIntegerField(unique=True)),
++                ('expires_at', models.DateTimeField()),
++                ('close_requested_at', models.DateTimeField(blank=True, null=True)),
++                ('closed_at', models.DateTimeField(blank=True, null=True)),
++                ('created_at', models.DateTimeField(auto_now_add=True)),
++                ('access', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='issued_sessions', to='accounts.externalomeroaccess')),
++            ],
++            options={
++                'constraints': [models.CheckConstraint(condition=models.Q(('omero_session_id__gt', 0)), name='external_omero_positive_session_id')],
++            },
++        ),
++    ]
+diff --git a/accounts/migrations/0010_externalomeroprovisioning.py b/accounts/migrations/0010_externalomeroprovisioning.py
+new file mode 100644
+index 0000000..4a452d1
+--- /dev/null
++++ b/accounts/migrations/0010_externalomeroprovisioning.py
+@@ -0,0 +1,37 @@
++# Generated by Django 5.2.19 on 2026-11-24 12:26
++
++import django.db.models.deletion
++from django.conf import settings
++from django.db import migrations, models
++
++
++class Migration(migrations.Migration):
++
++    dependencies = [
++        ('accounts', '0009_externalomerosession'),
++        ('socialaccount', '0006_alter_socialaccount_extra_data'),
++    ]
++
++    operations = [
++        migrations.CreateModel(
++            name='ExternalOmeroProvisioning',
++            fields=[
++                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++                ('server', models.CharField(max_length=200)),
++                ('username', models.CharField(max_length=255)),
++                ('first_name', models.CharField(max_length=150)),
++                ('last_name', models.CharField(max_length=150)),
++                ('group_id', models.PositiveBigIntegerField()),
++                ('valid_until', models.DateField()),
++                ('status', models.CharField(default='pending', max_length=16)),
++                ('created_omero_user_id', models.PositiveBigIntegerField(blank=True, null=True)),
++                ('created_at', models.DateTimeField(auto_now_add=True)),
++                ('updated_at', models.DateTimeField(auto_now=True)),
++                ('identity', models.OneToOneField(on_delete=django.db.models.deletion.PROTECT, related_name='external_omero_provisioning', to='socialaccount.socialaccount')),
++                ('requested_by', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='requested_omero_accounts', to=settings.AUTH_USER_MODEL)),
++            ],
++            options={
++                'constraints': [models.UniqueConstraint(fields=('server', 'username'), name='unique_external_provision_username'), models.CheckConstraint(condition=models.Q(('group_id__gt', 0)), name='external_provision_positive_group')],
++            },
++        ),
++    ]
+diff --git a/accounts/test_external_omero_access.py b/accounts/test_external_omero_access.py
+new file mode 100644
+index 0000000..8fc208b
+--- /dev/null
++++ b/accounts/test_external_omero_access.py
+@@ -0,0 +1,169 @@
++from datetime import timedelta
++
++from allauth.socialaccount.models import SocialAccount
++from django.db import IntegrityError, transaction
++from django.test import TestCase, override_settings
++from django.utils import timezone
++from django.urls import reverse
++
++from .models import AuditEvent, ExternalOmeroAccess, ExternalOmeroProvisioning, ExternalOmeroSession, User
++
++
++@override_settings(SOCIALACCOUNT_PROVIDERS={'orcid': {'BASE_DOMAIN': 'orcid.org'}})
++class ExternalOmeroAccessTests(TestCase):
++    def setUp(self):
++        self.admin = User.objects.create_user('admin', role=User.Role.ADMIN)
++        self.user = User.objects.create_user('researcher', role=User.Role.RESEARCHER)
++        self.identity = SocialAccount.objects.create(user=self.user, provider='orcid', uid='0000-0002-1825-0097')
++        self.link = ExternalOmeroAccess.objects.create(
++            identity=self.identity, server='core-omero-test', omero_user_id=42,
++            omero_username='researcher', valid_until=timezone.localdate() + timedelta(days=1),
++            verified_by=self.admin,
++        )
++
++    def test_approval_fails_closed_for_revocation_expiry_or_disabled_account(self):
++        self.assertTrue(self.link.is_approved())
++        self.link.revoked_at = timezone.now()
++        self.assertFalse(self.link.is_approved())
++        self.link.revoked_at = None
++        self.link.valid_until = timezone.localdate() - timedelta(days=1)
++        self.assertFalse(self.link.is_approved())
++        self.link.valid_until = timezone.localdate()
++        self.user.is_active = False
++        self.assertFalse(self.link.is_approved())
++        self.user.is_active = True
++        self.user.role = ''
++        self.assertFalse(self.link.is_approved())
++
++    def test_sandbox_identity_is_not_approved(self):
++        self.identity.provider = 'orcid-sandbox'
++        self.assertFalse(self.link.is_approved())
++
++    @override_settings(SOCIALACCOUNT_PROVIDERS={'orcid': {'BASE_DOMAIN': 'sandbox.orcid.org'}})
++    def test_sandbox_environment_cannot_grant_production_identity_access(self):
++        self.assertFalse(self.link.is_approved())
++
++    def test_cannot_link_one_omero_user_to_two_identities(self):
++        other = User.objects.create_user('other', role=User.Role.RESEARCHER)
++        identity = SocialAccount.objects.create(user=other, provider='orcid', uid='0000-0003-1419-2405')
++        with self.assertRaises(IntegrityError), transaction.atomic():
++            ExternalOmeroAccess.objects.create(
++                identity=identity, server='core-omero-test', omero_user_id=42,
++                omero_username='researcher', valid_until=timezone.localdate(), verified_by=self.admin,
++            )
++
++    @override_settings(OMERO_APPROVAL_TOKEN='a' * 48, OMERO_APPROVAL_SERVER='core-omero-test')
++    def test_service_approval_requires_tls_and_a_service_token(self):
++        url = reverse('omero_external_approval')
++        body = {'orcid': self.identity.uid}
++        token = {'HTTP_AUTHORIZATION': 'Bearer ' + 'a' * 48}
++        self.assertEqual(self.client.post(url, body, **token).status_code, 403)
++        self.assertEqual(self.client.post(url, body, secure=True).status_code, 403)
++        response = self.client.post(url, body, secure=True, **token)
++        self.assertEqual(response.json(), {'approved': True, 'access_id': self.link.pk, 'omero_user_id': 42, 'omero_username': 'researcher'})
++        self.assertIn('no-store', response['Cache-Control'])
++        self.link.revoked_at = timezone.now()
++        self.link.save(update_fields=['revoked_at'])
++        self.assertEqual(self.client.post(url, body, secure=True, **token).json(), {'approved': False})
++        self.assertEqual(self.client.post(url, {'orcid': 'invalid'}, secure=True, **token).status_code, 400)
++
++    @override_settings(OMERO_APPROVAL_TOKEN='a' * 48, OMERO_APPROVAL_SERVER='core-omero-test')
++    def test_registered_sessions_are_queued_when_access_is_revoked(self):
++        url = reverse('omero_external_approval')
++        auth = {'HTTP_AUTHORIZATION': 'Bearer ' + 'a' * 48, 'secure': True}
++        body = {'action': 'register', 'access_id': self.link.pk, 'session_id': '987'}
++        self.assertEqual(self.client.post(url, body, **auth).json(), {'registered': True})
++        self.assertEqual(self.client.post(url, {'action': 'pending'}, **auth).json(), {'session_ids': []})
++        self.link.revoked_at = timezone.now()
++        self.link.save(update_fields=['revoked_at'])
++        self.assertEqual(self.client.post(url, {'action': 'pending'}, **auth).json(), {'session_ids': [987]})
++        self.assertEqual(self.client.post(url, {**body, 'session_id': '988'}, **auth).status_code, 403)
++        self.assertEqual(self.client.post(url, {'action': 'closed', 'session_id': '987'}, **auth).json(), {'closed': True})
++        self.assertIsNotNone(ExternalOmeroSession.objects.get(omero_session_id=987).closed_at)
++        self.assertEqual(self.client.post(url, {'action': 'pending'}, **auth).json(), {'session_ids': []})
++
++    @override_settings(OMERO_APPROVAL_TOKEN='a' * 48, OMERO_APPROVAL_SERVER='core-omero-test')
++    def test_disabled_account_and_abandoned_login_queue_sessions(self):
++        url = reverse('omero_external_approval')
++        auth = {'HTTP_AUTHORIZATION': 'Bearer ' + 'a' * 48, 'secure': True}
++        self.client.post(url, {'action': 'register', 'access_id': self.link.pk, 'session_id': '987'}, **auth)
++        self.client.post(url, {'action': 'close_requested', 'session_id': '987'}, **auth)
++        self.assertEqual(self.client.post(url, {'action': 'pending'}, **auth).json(), {'session_ids': [987]})
++        ExternalOmeroSession.objects.filter(omero_session_id=987).update(close_requested_at=None)
++        self.user.is_active = False
++        self.user.save(update_fields=['is_active'])
++        self.assertEqual(self.client.post(url, {'action': 'pending'}, **auth).json(), {'session_ids': [987]})
++
++    @override_settings(OMERO_APPROVAL_TOKEN='', OMERO_APPROVAL_SERVER='core-omero-test')
++    def test_service_is_disabled_without_token(self):
++        response = self.client.post(reverse('omero_external_approval'), {'orcid': self.identity.uid},
++                                    secure=True, HTTP_AUTHORIZATION='Bearer ')
++        self.assertEqual(response.status_code, 403)
++
++    @override_settings(OMERO_APPROVAL_SERVER='core-omero-test')
++    def test_admin_can_record_and_revoke_verified_link(self):
++        self.link.delete()
++        url = reverse('update_external_omero_user')
++        body = {'identity_id': self.identity.pk, 'omero_user_id': '42', 'omero_username': 'researcher',
++                'valid_until': (timezone.localdate() + timedelta(days=365)).isoformat(),
++                'verified': 'yes', 'action': 'approve'}
++        self.client.force_login(self.user)
++        self.assertEqual(self.client.post(url, body).status_code, 403)
++        self.client.force_login(self.admin)
++        self.assertEqual(self.client.post(url, {**body, 'verified': ''}).status_code, 400)
++        self.assertEqual(self.client.post(url, body).status_code, 302)
++        link = ExternalOmeroAccess.objects.get(identity=self.identity)
++        self.assertTrue(link.is_approved())
++        self.assertTrue(AuditEvent.objects.filter(action='external_omero_link', target=self.user).exists())
++        self.assertContains(self.client.get(reverse('external_omero_users')), 'Create an OMERO account')
++        self.assertEqual(self.client.post(url, {'identity_id': self.identity.pk, 'action': 'revoke'}).status_code, 302)
++        link.refresh_from_db()
++        self.assertFalse(link.is_approved())
++
++    @override_settings(OMERO_APPROVAL_SERVER='core-omero-test')
++    def test_csrf_required_for_link_management(self):
++        from django.test import Client
++        client = Client(enforce_csrf_checks=True)
++        client.force_login(self.admin)
++        self.assertEqual(client.post(reverse('update_external_omero_user'), {'identity_id': self.identity.pk, 'action': 'revoke'}).status_code, 403)
++
++    @override_settings(OMERO_APPROVAL_TOKEN='a' * 48, OMERO_APPROVAL_SERVER='core-omero-test')
++    def test_admin_requests_account_worker_records_creation_and_link(self):
++        self.link.delete()
++        body = {'identity_id': self.identity.pk, 'group_id': '103', 'first_name': 'Test', 'last_name': 'Researcher',
++                'valid_until': (timezone.localdate() + timedelta(days=30)).isoformat(), 'verified': 'yes'}
++        url = reverse('create_external_omero_user')
++        self.client.force_login(self.user)
++        self.assertEqual(self.client.post(url, body).status_code, 403)
++        self.client.force_login(self.admin)
++        self.assertEqual(self.client.post(url, {**body, 'verified': ''}).status_code, 400)
++        self.assertEqual(self.client.post(url, body).status_code, 302)
++        job = ExternalOmeroProvisioning.objects.get(identity=self.identity)
++        self.assertEqual(job.status, 'pending')
++        self.assertFalse(ExternalOmeroAccess.objects.filter(identity=self.identity).exists())
++        auth = {'HTTP_AUTHORIZATION': 'Bearer ' + 'a' * 48, 'secure': True}
++        endpoint = reverse('omero_external_approval')
++        claim = self.client.post(endpoint, {'action': 'provision_claim'}, **auth).json()['job']
++        self.assertEqual(claim['username'], 'orcid-' + self.identity.uid)
++        self.assertEqual(claim['group_id'], 103)
++        self.assertEqual(self.client.post(endpoint, {'action': 'provision_claim'}, **auth).json(), {'job': None})
++        response = self.client.post(endpoint, {'action': 'provision_complete', 'job_id': job.pk, 'omero_user_id': 555}, **auth)
++        self.assertEqual(response.json(), {'recorded': True})
++        self.assertEqual(ExternalOmeroAccess.objects.get(identity=self.identity).omero_user_id, 555)
++        self.assertTrue(AuditEvent.objects.filter(action='external_omero_created', target=self.user).exists())
++
++    @override_settings(OMERO_APPROVAL_TOKEN='a' * 48, OMERO_APPROVAL_SERVER='core-omero-test')
++    def test_failed_provision_does_not_create_a_link_or_retry(self):
++        self.link.delete()
++        self.client.force_login(self.admin)
++        self.client.post(reverse('create_external_omero_user'), {'identity_id': self.identity.pk, 'group_id': '103',
++            'first_name': 'Test', 'last_name': 'Researcher', 'valid_until': timezone.localdate().isoformat(), 'verified': 'yes'})
++        job = ExternalOmeroProvisioning.objects.get(identity=self.identity)
++        auth = {'HTTP_AUTHORIZATION': 'Bearer ' + 'a' * 48, 'secure': True}
++        endpoint = reverse('omero_external_approval')
++        self.client.post(endpoint, {'action': 'provision_claim'}, **auth)
++        self.client.post(endpoint, {'action': 'provision_failed', 'job_id': job.pk, 'omero_user_id': 555}, **auth)
++        job.refresh_from_db()
++        self.assertEqual((job.status, job.created_omero_user_id), ('failed', 555))
++        self.assertFalse(ExternalOmeroAccess.objects.filter(identity=self.identity).exists())
++        self.assertIsNone(self.client.post(endpoint, {'action': 'provision_claim'}, **auth).json()['job'])
+diff --git a/templates/external_omero_users.html b/templates/external_omero_users.html
+new file mode 100644
+index 0000000..0f62cb5
+--- /dev/null
++++ b/templates/external_omero_users.html
+@@ -0,0 +1,36 @@
++{% extends 'base.html' %}{% load static %}{% block content %}
++<section class="dashboard-content administration-view">
++  <div class="administration-header"><div><p class="eyebrow">Access management</p><h1 class="title is-3">External OMERO users</h1></div><a class="button is-light" href="{% url 'administration' %}">← Administration</a></div>
++  <div class="admin-panel">
++    <p>Review the researcher in person and independently confirm their OMERO account before linking it. The link expires on the review date.</p>
++    <p>Save a link to grant ORCID access to the existing OMERO account. Revoking the link blocks new sign-ins and queues its ORCID-issued web and upload sessions for termination. Closure is retried if OMERO is unavailable.</p>
++    <p>For a new researcher, request an account below. Choose an existing approved OMERO group; requests that need reconciliation remain visible for staff review.</p>
++    {% if not server %}<p>External OMERO access is not configured.</p>{% else %}
++    <form method="post" action="{% url 'update_external_omero_user' %}">{% csrf_token %}
++      <label>Authenticated ORCID user <span class="select"><select name="identity_id" required><option value="">Select a user</option>{% for account in accounts %}{% for identity in account.socialaccount_set.all %}{% if identity.provider == 'orcid' %}<option value="{{ identity.pk }}">{{ account.username }} — {{ identity.uid }}</option>{% endif %}{% endfor %}{% endfor %}</select></span></label>
++      <label>OMERO user ID <input class="input" name="omero_user_id" type="number" min="1" required></label>
++      <label>OMERO username <input class="input" name="omero_username" maxlength="255" required></label>
++      <label>Review by <input class="input" name="valid_until" type="date" required></label>
++      <label><input type="checkbox" name="verified" value="yes" required> I met the researcher and verified this OMERO account.</label>
++      <button class="button is-link" name="action" value="approve">Save link</button>
++    </form>{% endif %}
++  </div>
++  {% if server %}<div class="admin-panel"><h2 class="title is-5">Create an OMERO account</h2>
++    <form method="post" action="{% url 'create_external_omero_user' %}">{% csrf_token %}
++      <label>Authenticated ORCID user <span class="select"><select name="identity_id" required><option value="">Select a user</option>{% for account in accounts %}{% for identity in account.socialaccount_set.all %}{% if identity.provider == 'orcid' %}<option value="{{ identity.pk }}">{{ account.username }} — {{ identity.uid }}</option>{% endif %}{% endfor %}{% endfor %}</select></span></label>
++      <label>First name <input class="input" name="first_name" maxlength="150" required></label>
++      <label>Last name <input class="input" name="last_name" maxlength="150" required></label>
++      <label>Approved existing OMERO group <span class="select"><select id="provision-group" name="group_id" required disabled><option value="">Loading groups…</option></select></span></label><p id="provision-group-status" role="status"></p>
++      <label>Review by <input class="input" name="valid_until" type="date" required></label>
++      <label><input type="checkbox" name="verified" value="yes" required> I met the researcher and verified their access to this group.</label>
++      <button class="button is-link" id="provision-submit" type="submit" disabled>Request account</button>
++    </form>
++    <p>The account name is based on the authenticated ORCID iD. No password is created.</p>
++    <table><thead><tr><th>ORCID</th><th>Group ID</th><th>Request status</th><th>OMERO user ID</th></tr></thead><tbody>
++    {% for job in provisioning %}<tr><td>{{ job.identity.uid }}</td><td>{{ job.group_id }}</td><td>{{ job.status }}</td><td>{{ job.created_omero_user_id|default:'—' }}</td></tr>{% empty %}<tr><td colspan="4">No account requests.</td></tr>{% endfor %}
++    </tbody></table><p>Failed or interrupted requests require administrator reconciliation; they are not automatically repeated.</p>
++  </div>{% endif %}
++  <div class="admin-panel"><h2 class="title is-5">Existing links</h2><div class="admin-table-wrap"><table><thead><tr><th>ORCID</th><th>OMERO account</th><th>Review by</th><th>Verified by</th><th>Status</th><th>Action</th></tr></thead><tbody>
++    {% for link in links %}<tr><td>{{ link.identity.uid }}</td><td>{{ link.omero_username }} ({{ link.omero_user_id }})</td><td>{{ link.valid_until }}</td><td>{{ link.verified_by.username }}</td><td>{% if link.revoked_at %}Revoked{% elif link.is_approved %}Approved{% else %}Expired or inactive{% endif %}</td><td>{% if not link.revoked_at %}<form method="post" action="{% url 'update_external_omero_user' %}">{% csrf_token %}<input type="hidden" name="identity_id" value="{{ link.identity_id }}"><button class="button is-small" name="action" value="revoke">Revoke link</button></form>{% endif %}</td></tr>{% empty %}<tr><td colspan="6">No links recorded.</td></tr>{% endfor %}
++  </tbody></table></div></div>
++</section><script src="{% static 'js/external_omero_users.js' %}" defer></script>{% endblock %}
+diff --git a/static/js/external_omero_users.js b/static/js/external_omero_users.js
+new file mode 100644
+index 0000000..78868b0
+--- /dev/null
++++ b/static/js/external_omero_users.js
+@@ -0,0 +1,21 @@
++(() => {
++  const select = document.getElementById('provision-group');
++  const button = document.getElementById('provision-submit');
++  const status = document.getElementById('provision-group-status');
++  if (!select || !button || !status) return;
++  fetch('/api/omero/groups', {credentials: 'same-origin'}).then(response => {
++    if (!response.ok) throw new Error('Group inventory unavailable');
++    return response.json();
++  }).then(data => {
++    select.replaceChildren(new Option('Select a group', ''));
++    for (const group of data.groups) {
++      if (['system', 'user'].includes((group.name || '').toLowerCase())) continue;
++      select.add(new Option(`${group.name || 'Group'} (ID ${group.id})`, String(group.id)));
++    }
++    select.disabled = select.options.length === 1;
++    if (select.disabled) status.textContent = 'No groups are available. Try again later.';
++    const update = () => { button.disabled = select.disabled || !select.value; };
++    select.addEventListener('change', update);
++    update();
++  }).catch(() => { status.textContent = 'Could not load OMERO groups. Try again later.'; });
++})();
+diff --git a/deploy/openshift/omero_orcid_gate.py b/deploy/openshift/omero_orcid_gate.py
+new file mode 100644
+index 0000000..acc9624
+--- /dev/null
++++ b/deploy/openshift/omero_orcid_gate.py
+@@ -0,0 +1,154 @@
++"""ORCID callback for the test OMERO.oauth installation.
++
++Mount as ``omero_oauth.cci_orcid`` and route only the ORCID callback to
++``OrcidCallbackView``. The existing OAuth routes remain authoritative for GU.
++"""
++import hmac
++import os
++import re
++from urllib.parse import urlsplit
++
++import requests
++from django.core.exceptions import PermissionDenied
++
++from omero_oauth.providers import OauthProvider
++from omero_oauth.views import OauthCallbackView, create_admin_conn
++
++
++def approval_request(data, url, token, post=requests.post):
++    parsed = urlsplit(url)
++    if (parsed.scheme != 'https' or not parsed.hostname or parsed.username or
++            parsed.password or parsed.query or parsed.fragment or len(token) < 32):
++        raise PermissionDenied('External access is unavailable.')
++    try:
++        ca_bundle = os.environ.get('CCI_APPROVAL_CA_BUNDLE') or True
++        response = post(url, data=data,
++                        headers={'Authorization': 'Bearer ' + token},
++                        timeout=5, allow_redirects=False, verify=ca_bundle)
++        if response.status_code != 200:
++            raise ValueError('Approval service rejected request')
++        result = response.json()
++        if not isinstance(result, dict):
++            raise ValueError('Invalid response')
++    except (requests.RequestException, ValueError, TypeError, AttributeError):
++        raise PermissionDenied('External access is unavailable.') from None
++    return result
++
++
++def approved_account(orcid, url, token, post=requests.post):
++    """Return the approval ID, OMERO user ID and name, or deny access."""
++    if not isinstance(orcid, str) or not re.fullmatch(r'\d{4}-\d{4}-\d{4}-\d{3}[\dX]', orcid):
++        raise PermissionDenied('External access is unavailable.')
++    result = approval_request({'orcid': orcid}, url, token, post)
++    access_id, user_id, username = result.get('access_id'), result.get('omero_user_id'), result.get('omero_username')
++    if (result.get('approved') is not True or type(access_id) is not int or access_id <= 0 or
++            type(user_id) is not int or user_id <= 0 or not isinstance(username, str) or not username.strip()):
++        raise PermissionDenied('External access is unavailable.')
++    return access_id, user_id, username
++
++
++def session_for_approved_account(access_id, user_id, username):
++    """Register the numeric session ID before releasing its bearer token."""
++    import omero
++    from omero.rtypes import unwrap
++    admin = create_admin_conn()
++    created = None
++    try:
++        user = admin.getObject('Experimenter', user_id)
++        if (user is None or user.getId() != user_id or user.getName() != username or
++                not user.isActive() or user.isAdmin()):
++            raise PermissionDenied('External access is unavailable.')
++        service = admin.c.getSession().getSessionService()
++        principal = omero.sys.Principal()
++        principal.name, principal.eventType = username, 'User'
++        created = service.createSessionWithTimeout(principal, 8 * 60 * 60 * 1000)
++        session_id, session_uuid = unwrap(created.getId()), unwrap(created.getUuid())
++        result = approval_request({'action': 'register', 'access_id': access_id, 'session_id': session_id},
++                                  os.environ.get('CCI_APPROVAL_URL', ''), os.environ.get('CCI_APPROVAL_TOKEN', ''))
++        if result.get('registered') is not True:
++            raise PermissionDenied('External access is unavailable.')
++        created = None
++        return session_id, session_uuid
++    finally:
++        if created is not None:
++            try:
++                for _ in range(10):
++                    if service.closeSession(created) < 0:
++                        break
++            except Exception:
++                pass
++        admin.close()
++
++
++class OrcidCallbackView(OauthCallbackView):
++    def get(self, request, name):
++        if name != 'orcid':
++            raise PermissionDenied('Invalid provider.')
++        expected = request.session.pop('oauth_state', '')
++        actual = request.GET.get('state', '')
++        code = request.GET.get('code', '')
++        if (not expected or not actual or not code or not expected.isascii() or
++                not actual.isascii() or not hmac.compare_digest(expected, actual)):
++            raise PermissionDenied('Invalid login state.')
++        try:
++            # The ORCID iD comes from ORCID's authenticated token response, not
++            # a browser parameter or a user-entered identifier.
++            oauth = OauthProvider('orcid', state=expected)
++            # ORCID expects the client credentials in the form body, not HTTP
++            # Basic authentication used by the upstream provider's default.
++            token = oauth.oauth.fetch_token(
++                oauth.get('url.token'), code=code, client_secret=oauth.get('client.secret'),
++                include_client_id=True, headers={'Accept': 'application/json'}, timeout=8)
++            orcid = token.get('orcid', '')
++            access_id, user_id, username = approved_account(
++                orcid, os.environ.get('CCI_APPROVAL_URL', ''),
++                os.environ.get('CCI_APPROVAL_TOKEN', ''))
++            session_id, session = session_for_approved_account(access_id, user_id, username)
++            try:
++                response = self.login_with_session(request, session)
++                request.session['cci_orcid'] = orcid
++                request.session['cci_orcid_access_id'] = access_id
++                return response
++            except Exception:
++                approval_request({'action': 'close_requested', 'session_id': session_id},
++                                 os.environ.get('CCI_APPROVAL_URL', ''), os.environ.get('CCI_APPROVAL_TOKEN', ''))
++                raise
++        except PermissionDenied:
++            raise
++        except Exception:
++            # Neither OAuth tokens, OMERO session IDs nor credentials belong in
++            # a browser response or an exception trace.
++            raise PermissionDenied('External access is unavailable.') from None
++
++
++def sessiontoken(request):
++    """Keep the existing GU flow; track upload tokens issued to ORCID users."""
++    orcid = request.session.get('cci_orcid')
++    if not orcid:
++        from omero_oauth.views import sessiontoken as existing_sessiontoken
++        return existing_sessiontoken(request)
++
++    from django.http import HttpResponse
++    from django.template import loader
++    from omeroweb.webclient.decorators import login_required, render_response
++    from omero_oauth import oauth_settings
++
++    @login_required()
++    @render_response()
++    def guarded(req, conn=None, **kwargs):
++        if not oauth_settings.OAUTH_SESSIONTOKEN_ENABLE:
++            raise PermissionDenied('Upload access is unavailable.')
++        access_id, user_id, username = approved_account(
++            orcid, os.environ.get('CCI_APPROVAL_URL', ''), os.environ.get('CCI_APPROVAL_TOKEN', ''))
++        if (access_id != req.session.get('cci_orcid_access_id') or
++                conn.getUser().getId() != user_id or conn.getUser().getName() != username):
++            raise PermissionDenied('External access is unavailable.')
++        _, token = session_for_approved_account(access_id, user_id, username)
++        context = {'client_name': oauth_settings.OAUTH_DISPLAY_NAME, 'sessiontoken_enabled': True,
++                   'url_suffix': '', 'new_session': token}
++        response = HttpResponse(loader.get_template('oauth/sessiontoken.html').render(context, request=req))
++        response['Cache-Control'] = 'no-store'
++        response['Referrer-Policy'] = 'no-referrer'
++        return response
++
++    return guarded(request)
+diff --git a/deploy/openshift/omero_orcid_urls.py b/deploy/openshift/omero_orcid_urls.py
+new file mode 100644
+index 0000000..be575af
+--- /dev/null
++++ b/deploy/openshift/omero_orcid_urls.py
+@@ -0,0 +1,13 @@
++"""Drop-in route configuration for the tested OMERO.oauth deployment."""
++from django.urls import re_path as url
++from . import views
++from .cci_orcid import OrcidCallbackView, sessiontoken
++
++urlpatterns = [
++    url(r'^$', views.OauthLoginView.as_view(), name='oauth_index'),
++    url(r'^callback/(?P<name>orcid)$', OrcidCallbackView.as_view(), name='oauth_orcid_callback'),
++    url(r'^callback/(?P<name>[a-z][a-z0-9]+)$', views.OauthCallbackView.as_view(), name='oauth_callback'),
++    url(r'^confirm$', views.confirm, name='oauth_confirm'),
++    url(r'^sessiontoken$', sessiontoken, name='oauth_sessiontoken'),
++    url(r'^error$', views.error, name='oauth_error'),
++]
+diff --git a/deploy/openshift/omero_orcid_worker.py b/deploy/openshift/omero_orcid_worker.py
+new file mode 100644
+index 0000000..fcf04bb
+--- /dev/null
++++ b/deploy/openshift/omero_orcid_worker.py
+@@ -0,0 +1,106 @@
++"""Close revoked ORCID-issued sessions; run inside the OMERO.web pod."""
++import logging
++import os
++import re
++import time
++
++os.chdir('/tmp')
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'omeroweb.settings')
++import django
++django.setup()
++
++from omero_oauth.cci_orcid import approval_request
++from omero_oauth.views import create_admin_conn
++
++logger = logging.getLogger('cci_orcid_revocation')
++
++
++def process_pending():
++    url, token = os.environ.get('CCI_APPROVAL_URL', ''), os.environ.get('CCI_APPROVAL_TOKEN', '')
++    pending = approval_request({'action': 'pending'}, url, token).get('session_ids')
++    if not isinstance(pending, list) or any(type(s) is not int or s <= 0 for s in pending):
++        raise ValueError('Invalid session list')
++    if not pending:
++        return
++    admin = create_admin_conn()
++    try:
++        server = admin.c.getSession()
++        service, query = server.getSessionService(), server.getQueryService()
++        for session_id in pending:
++            try:
++                session = query.get('Session', session_id)
++                for _ in range(100):
++                    if service.closeSession(session) < 0:
++                        break
++                else:
++                    raise RuntimeError('Session still has references')
++                if approval_request({'action': 'closed', 'session_id': session_id}, url, token).get('closed') is not True:
++                    raise RuntimeError('Session closure was not recorded')
++            except Exception:
++                # IDs and bearer tokens must not be logged. Retry next cycle.
++                logger.warning('Could not close an ORCID session; will retry.')
++    finally:
++        admin.close()
++
++
++def process_provisioning():
++    url, token = os.environ.get('CCI_APPROVAL_URL', ''), os.environ.get('CCI_APPROVAL_TOKEN', '')
++    job = approval_request({'action': 'provision_claim'}, url, token).get('job')
++    if job is None:
++        return
++    if not isinstance(job, dict) or type(job.get('id')) is not int or job['id'] <= 0:
++        raise ValueError('Invalid provisioning request')
++    job_id, created_id = job['id'], None
++    admin = None
++    try:
++        username, first, last, group_id = job.get('username'), job.get('first_name'), job.get('last_name'), job.get('group_id')
++        if (not isinstance(username, str) or not re.fullmatch(r'orcid-\d{4}-\d{4}-\d{4}-\d{3}[\dX]', username) or
++                not isinstance(first, str) or not first.strip() or len(first) > 150 or
++                not isinstance(last, str) or not last.strip() or len(last) > 150 or type(group_id) is not int or group_id <= 0):
++            raise ValueError('Invalid account details')
++        admin = create_admin_conn()
++        group = admin.getObject('ExperimenterGroup', group_id)
++        if not group or group.getId() != group_id or group.getName().lower() in ('system', 'user'):
++            raise ValueError('Invalid group')
++        if admin.getObject('Experimenter', attributes={'omeName': username}):
++            raise ValueError('Username already exists')
++        created_id = admin.createExperimenter(omeName=username, firstName=first, lastName=last, email='',
++            isAdmin=False, isActive=True, defaultGroupId=group_id, otherGroupIds=[], password=None)
++        user = admin.getObject('Experimenter', created_id)
++        if not user or user.getName() != username or not user.isActive() or user.isAdmin():
++            raise ValueError('Created account could not be verified')
++        result = approval_request({'action': 'provision_complete', 'job_id': job_id, 'omero_user_id': created_id}, url, token)
++        if result.get('recorded') is not True:
++            raise RuntimeError('Created account was not recorded')
++    except Exception:
++        # Never retry account creation automatically. An administrator must
++        # reconcile a partially created account before issuing a new request.
++        try:
++            data = {'action': 'provision_failed', 'job_id': job_id}
++            if created_id is not None:
++                data['omero_user_id'] = created_id
++            approval_request(data, url, token)
++        except Exception:
++            pass
++        logger.warning('OMERO account request requires administrator review.')
++    finally:
++        if admin is not None:
++            admin.close()
++
++
++def main():
++    logging.basicConfig(level=logging.INFO)
++    while True:
++        try:
++            process_pending()
++        except Exception:
++            logger.warning('ORCID session revocation is unavailable; will retry.')
++        try:
++            process_provisioning()
++        except Exception:
++            logger.warning('OMERO account provisioning is unavailable; will retry.')
++        time.sleep(30)
++
++
++if __name__ == '__main__':
++    main()
+diff --git a/tests/test_omero_orcid_gate.py b/tests/test_omero_orcid_gate.py
+new file mode 100644
+index 0000000..eae88b4
+--- /dev/null
++++ b/tests/test_omero_orcid_gate.py
+@@ -0,0 +1,166 @@
++"""Contract tests for the separately deployed OMERO OAuth callback."""
++import importlib.util
++import sys
++import types
++import unittest
++from pathlib import Path
++from unittest.mock import Mock, patch
++
++from django.core.exceptions import PermissionDenied
++
++
++def load_gate():
++    provider = types.ModuleType('omero_oauth.providers')
++    provider.OauthProvider = Mock()
++    views = types.ModuleType('omero_oauth.views')
++    views.OauthCallbackView = type('OauthCallbackView', (), {})
++    views.create_admin_conn = Mock()
++    views.create_session_for_user = Mock()
++    package = types.ModuleType('omero_oauth')
++    with patch.dict(sys.modules, {'omero_oauth': package, 'omero_oauth.providers': provider, 'omero_oauth.views': views}):
++        spec = importlib.util.spec_from_file_location('cci_orcid_test', Path(__file__).resolve().parents[1] / 'deploy/openshift/omero_orcid_gate.py')
++        module = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(module)
++    return module
++
++
++class OrcidGateTests(unittest.TestCase):
++    def setUp(self):
++        self.gate = load_gate()
++        self.orcid = '0000-0002-1825-0097'
++        self.url = 'https://dashboard.example/internal/omero/approval/'
++        self.token = 'x' * 48
++
++    def test_lookup_requires_https_approval_and_never_follows_redirects(self):
++        response = Mock(status_code=200)
++        response.json.return_value = {'approved': True, 'access_id': 2, 'omero_user_id': 7, 'omero_username': 'alice'}
++        post = Mock(return_value=response)
++        self.assertEqual(self.gate.approved_account(self.orcid, self.url, self.token, post), (2, 7, 'alice'))
++        self.assertFalse(post.call_args.kwargs['allow_redirects'])
++        for url in ('http://dashboard.example/', 'https://user:pass@dashboard.example/'):
++            with self.assertRaises(PermissionDenied):
++                self.gate.approved_account(self.orcid, url, self.token, post)
++        for body in ({'approved': False}, {'approved': True, 'omero_user_id': True, 'omero_username': 'alice'}):
++            response.json.return_value = body
++            with self.assertRaises(PermissionDenied):
++                self.gate.approved_account(self.orcid, self.url, self.token, post)
++
++    def test_mismatch_inactive_and_admin_never_get_sessions(self):
++        user = Mock()
++        user.getId.return_value = 7
++        user.getName.return_value = 'alice'
++        user.isActive.return_value = True
++        user.isAdmin.return_value = False
++        admin = self.gate.create_admin_conn.return_value
++        admin.getObject.return_value = user
++        omero = types.ModuleType('omero')
++        omero.sys = types.SimpleNamespace(Principal=types.SimpleNamespace)
++        rtypes = types.ModuleType('omero.rtypes')
++        rtypes.unwrap = lambda x: x
++        service = admin.c.getSession.return_value.getSessionService.return_value
++        created = service.createSessionWithTimeout.return_value
++        created.getId.return_value, created.getUuid.return_value = 987, 'private-session-token'
++        with patch.dict(sys.modules, {'omero': omero, 'omero.rtypes': rtypes}), \
++                patch.object(self.gate, 'approval_request', return_value={'registered': True}):
++            self.assertEqual(self.gate.session_for_approved_account(2, 7, 'alice'), (987, 'private-session-token'))
++            for change, value in ((user.getId, 8), (user.getName, 'bob'), (user.isActive, False), (user.isAdmin, True)):
++                service.createSessionWithTimeout.reset_mock()
++                old = change.return_value
++                change.return_value = value
++                with self.assertRaises(PermissionDenied):
++                    self.gate.session_for_approved_account(2, 7, 'alice')
++                service.createSessionWithTimeout.assert_not_called()
++                change.return_value = old
++
++    def test_bad_state_cannot_exchange_token(self):
++        request = Mock()
++        request.session = {'oauth_state': 'expected'}
++        request.GET = {'state': 'different', 'code': 'code'}
++        with self.assertRaises(PermissionDenied):
++            self.gate.OrcidCallbackView().get(request, 'orcid')
++        self.gate.OauthProvider.assert_not_called()
++
++    def test_gu_upload_token_uses_the_existing_handler(self):
++        request = Mock()
++        request.session = {}
++        views = types.ModuleType('omero_oauth.views')
++        views.sessiontoken = Mock(return_value='gu-response')
++        with patch.dict(sys.modules, {'omero_oauth.views': views}):
++            self.assertEqual(self.gate.sessiontoken(request), 'gu-response')
++        views.sessiontoken.assert_called_once_with(request)
++
++    def test_orcid_upload_token_rechecks_approval_and_is_tracked(self):
++        request = Mock()
++        request.session = {'cci_orcid': self.orcid, 'cci_orcid_access_id': 2}
++        user = Mock()
++        user.getId.return_value, user.getName.return_value = 7, 'alice'
++        conn = Mock()
++        conn.getUser.return_value = user
++        decorators = types.ModuleType('omeroweb.webclient.decorators')
++        decorators.login_required = lambda: lambda fn: lambda req: fn(req, conn=conn)
++        decorators.render_response = lambda: lambda fn: fn
++        package = types.ModuleType('omero_oauth')
++        package.oauth_settings = types.SimpleNamespace(OAUTH_SESSIONTOKEN_ENABLE=True, OAUTH_DISPLAY_NAME='CCI')
++        template = Mock()
++        template.render.return_value = 'upload token page'
++        from django.conf import settings
++        if not settings.configured:
++            settings.configure(DEFAULT_CHARSET='utf-8')
++        with patch.dict(sys.modules, {'omeroweb': types.ModuleType('omeroweb'),
++                                      'omeroweb.webclient': types.ModuleType('omeroweb.webclient'),
++                                      'omeroweb.webclient.decorators': decorators,
++                                      'omero_oauth': package}), \
++                patch.object(self.gate, 'approved_account', return_value=(2, 7, 'alice')), \
++                patch.object(self.gate, 'session_for_approved_account', return_value=(987, 'private-token')) as create, \
++                patch('django.template.loader.get_template', return_value=template):
++            response = self.gate.sessiontoken(request)
++        self.assertEqual(response.status_code, 200)
++        self.assertEqual(response['Cache-Control'], 'no-store')
++        create.assert_called_once_with(2, 7, 'alice')
++
++    def test_registration_failure_closes_the_new_session(self):
++        admin = self.gate.create_admin_conn.return_value
++        user = admin.getObject.return_value
++        user.getId.return_value, user.getName.return_value = 7, 'alice'
++        user.isActive.return_value, user.isAdmin.return_value = True, False
++        service = admin.c.getSession.return_value.getSessionService.return_value
++        service.closeSession.return_value = -2
++        omero = types.ModuleType('omero')
++        omero.sys = types.SimpleNamespace(Principal=types.SimpleNamespace)
++        rtypes = types.ModuleType('omero.rtypes')
++        rtypes.unwrap = lambda x: x
++        with patch.dict(sys.modules, {'omero': omero, 'omero.rtypes': rtypes}), \
++                patch.object(self.gate, 'approval_request', side_effect=PermissionDenied):
++            with self.assertRaises(PermissionDenied):
++                self.gate.session_for_approved_account(2, 7, 'alice')
++        service.closeSession.assert_called_once_with(service.createSessionWithTimeout.return_value)
++
++    def test_callback_uses_authenticated_orcid_and_checks_approval_before_session(self):
++        request = Mock()
++        request.session = {'oauth_state': 'valid-state'}
++        request.GET = {'state': 'valid-state', 'code': 'code', 'orcid': 'attacker-controlled'}
++        self.gate.OauthProvider.return_value.oauth.fetch_token.return_value = {'orcid': self.orcid}
++        callback = self.gate.OrcidCallbackView()
++        callback.login_with_session = Mock(return_value='response')
++        with patch.dict('os.environ', {'CCI_APPROVAL_URL': self.url, 'CCI_APPROVAL_TOKEN': self.token}), \
++                patch.object(self.gate, 'approved_account', return_value=(2, 7, 'alice')) as approve, \
++                patch.object(self.gate, 'session_for_approved_account', return_value=(987, 'session')) as session:
++            self.assertEqual(callback.get(request, 'orcid'), 'response')
++            approve.assert_called_once_with(self.orcid, self.url, self.token)
++            session.assert_called_once_with(2, 7, 'alice')
++            callback.login_with_session.assert_called_once_with(request, 'session')
++
++    def test_denied_approval_never_creates_a_session(self):
++        request = Mock()
++        request.session = {'oauth_state': 'valid-state'}
++        request.GET = {'state': 'valid-state', 'code': 'code'}
++        self.gate.OauthProvider.return_value.oauth.fetch_token.return_value = {'orcid': self.orcid}
++        with patch.object(self.gate, 'approved_account', side_effect=PermissionDenied), \
++                patch.object(self.gate, 'session_for_approved_account') as session:
++            with self.assertRaises(PermissionDenied):
++                self.gate.OrcidCallbackView().get(request, 'orcid')
++            session.assert_not_called()
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/tests/test_omero_orcid_worker.py b/tests/test_omero_orcid_worker.py
+new file mode 100644
+index 0000000..356d21c
+--- /dev/null
++++ b/tests/test_omero_orcid_worker.py
+@@ -0,0 +1,76 @@
++import importlib.util
++import sys
++import types
++import unittest
++from pathlib import Path
++from unittest.mock import Mock, patch
++
++
++def load_worker():
++    django = types.ModuleType('django')
++    django.setup = Mock()
++    package = types.ModuleType('omero_oauth')
++    gate = types.ModuleType('omero_oauth.cci_orcid')
++    gate.approval_request = Mock()
++    views = types.ModuleType('omero_oauth.views')
++    views.create_admin_conn = Mock()
++    path = Path(__file__).resolve().parents[1] / 'deploy/openshift/omero_orcid_worker.py'
++    with patch('os.chdir'), patch.dict(sys.modules, {'django': django, 'omero_oauth': package,
++                                                     'omero_oauth.cci_orcid': gate, 'omero_oauth.views': views}):
++        spec = importlib.util.spec_from_file_location('cci_orcid_worker_test', path)
++        worker = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(worker)
++    return worker
++
++
++class WorkerTests(unittest.TestCase):
++    def test_worker_closes_each_reference_and_acknowledges(self):
++        worker = load_worker()
++        worker.approval_request.side_effect = [{'session_ids': [123]}, {'closed': True}]
++        admin = worker.create_admin_conn.return_value
++        service = admin.c.getSession.return_value.getSessionService.return_value
++        service.closeSession.side_effect = [1, 0, -2]
++        worker.process_pending()
++        self.assertEqual(service.closeSession.call_count, 3)
++        self.assertEqual(worker.approval_request.call_args.args[0], {'action': 'closed', 'session_id': 123})
++        admin.close.assert_called_once()
++
++    def test_failure_is_not_acknowledged(self):
++        worker = load_worker()
++        worker.approval_request.return_value = {'session_ids': [123]}
++        admin = worker.create_admin_conn.return_value
++        admin.c.getSession.return_value.getSessionService.return_value.closeSession.side_effect = RuntimeError('failure')
++        worker.process_pending()
++        self.assertEqual(worker.approval_request.call_count, 1)
++        admin.close.assert_called_once()
++
++    def test_provisioning_creates_only_a_non_admin_in_the_selected_group(self):
++        worker = load_worker()
++        job = {'id': 4, 'username': 'orcid-0000-0002-1825-0097', 'first_name': 'Test', 'last_name': 'Person', 'group_id': 103}
++        worker.approval_request.side_effect = [{'job': job}, {'recorded': True}]
++        admin = worker.create_admin_conn.return_value
++        group, user = Mock(), Mock()
++        group.getId.return_value, group.getName.return_value = 103, 'Metrology'
++        user.getName.return_value, user.isActive.return_value, user.isAdmin.return_value = job['username'], True, False
++        admin.getObject.side_effect = [group, None, user]
++        admin.createExperimenter.return_value = 555
++        worker.process_provisioning()
++        kwargs = admin.createExperimenter.call_args.kwargs
++        self.assertEqual((kwargs['defaultGroupId'], kwargs['isAdmin'], kwargs['password']), (103, False, None))
++        self.assertEqual(worker.approval_request.call_args.args[0], {'action': 'provision_complete', 'job_id': 4, 'omero_user_id': 555})
++
++    def test_conflicting_username_is_not_claimed_or_created(self):
++        worker = load_worker()
++        job = {'id': 4, 'username': 'orcid-0000-0002-1825-0097', 'first_name': 'Test', 'last_name': 'Person', 'group_id': 103}
++        worker.approval_request.side_effect = [{'job': job}, {'recorded': True}]
++        admin = worker.create_admin_conn.return_value
++        group = Mock()
++        group.getId.return_value, group.getName.return_value = 103, 'Metrology'
++        admin.getObject.side_effect = [group, Mock()]
++        worker.process_provisioning()
++        admin.createExperimenter.assert_not_called()
++        self.assertEqual(worker.approval_request.call_args.args[0], {'action': 'provision_failed', 'job_id': 4})
++
++
++if __name__ == '__main__':
++    unittest.main()

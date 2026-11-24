@@ -1,0 +1,38 @@
+# EXAMPLE ONLY: replace the image, namespace and OAuth package path after
+# checking the deployed runtime; merge with, rather than replace, existing spec.
+spec:
+  template:
+    spec:
+      containers:
+        - name: omero-web
+          env:
+            - {name: CCI_APPROVAL_URL, value: "https://dashboard-omero-approval.<namespace>.svc/internal/omero/approval/"}
+            - {name: CCI_APPROVAL_CA_BUNDLE, value: /var/run/cci-approval-ca/service-ca.crt}
+            - name: CCI_APPROVAL_TOKEN
+              valueFrom:
+                secretKeyRef: {name: dashboard-omero-approval-token, key: token}
+          volumeMounts:
+            - {name: cci-approval-ca, mountPath: /var/run/cci-approval-ca, readOnly: true}
+            - {name: cci-orcid-code, mountPath: "<installed-omero-oauth-package>/cci_orcid.py", subPath: cci_orcid.py, readOnly: true}
+            - {name: cci-orcid-code, mountPath: "<installed-omero-oauth-package>/urls.py", subPath: urls.py, readOnly: true}
+        - name: cci-orcid-revocation
+          image: "<matching-omero-web-image@sha256:digest>"
+          command: ["/opt/omero/web/venv3/bin/python", "/cci/cci_worker.py"]
+          env:
+            - {name: OMERODIR, value: /opt/omero/web/OMERO.web}
+            - {name: CCI_APPROVAL_URL, value: "https://dashboard-omero-approval.<namespace>.svc/internal/omero/approval/"}
+            - {name: CCI_APPROVAL_CA_BUNDLE, value: /var/run/cci-approval-ca/service-ca.crt}
+            - name: CCI_APPROVAL_TOKEN
+              valueFrom:
+                secretKeyRef: {name: dashboard-omero-approval-token, key: token}
+          volumeMounts:
+            - {name: opt-omero-web, mountPath: /opt/omero/web/}
+            - {name: omeroweb-config-omero, mountPath: /opt/omero/web/config/omeroweb-config.omero, subPath: omeroweb-config.omero, readOnly: true}
+            - {name: cci-approval-ca, mountPath: /var/run/cci-approval-ca, readOnly: true}
+            - {name: cci-orcid-code, mountPath: "<installed-omero-oauth-package>/cci_orcid.py", subPath: cci_orcid.py, readOnly: true}
+            - {name: cci-orcid-code, mountPath: /cci/cci_worker.py, subPath: cci_worker.py, readOnly: true}
+      volumes:
+        - name: cci-approval-ca
+          configMap: {name: dashboard-omero-approval-ca}
+        - name: cci-orcid-code
+          configMap: {name: dashboard-omero-orcid-code}
